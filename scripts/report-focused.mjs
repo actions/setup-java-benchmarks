@@ -4,7 +4,7 @@ import {pathToFileURL} from 'node:url';
 import {hashFilesSingle, median, secondsBetween} from './report.mjs';
 
 const API_VERSION = '2022-11-28';
-const JOB_PATTERN = /^(v5\.6|main) \/ warm \/ (\d+)$/;
+const JOB_PATTERN = /^(v4|main) \/ warm \/ (\d+)$/;
 
 export function parseFocusedJob(name) {
   const match = name.match(JOB_PATTERN);
@@ -88,33 +88,33 @@ function markdown(metadata, rows, summaries, caches) {
   }
   const deltas = [];
   for (let sample = 1; sample <= metadata.samples; sample += 1) {
-    const v56 = rows.find(
-      row => row.version === 'v5.6' && row.sample === sample
+    const v4 = rows.find(
+      row => row.version === 'v4' && row.sample === sample
     );
     const main = rows.find(
       row => row.version === 'main' && row.sample === sample
     );
-    if (v56 && main) deltas.push(main.setupSeconds - v56.setupSeconds);
+    if (v4 && main) deltas.push(main.setupSeconds - v4.setupSeconds);
   }
   lines.push(
     '',
-    `Paired median delta (main - v5.6): **${median(deltas).toFixed(1)}s**. Negative means main was faster.`,
+    `Paired median delta (main - v4): **${median(deltas).toFixed(1)}s**. Negative means main was faster.`,
     '',
     '## Samples',
     '',
-    '| Sample | v5.6 (s) | main (s) | Delta (s) |',
+    '| Sample | v4 (s) | main (s) | Delta (s) |',
     '| ---: | ---: | ---: | ---: |'
   );
   for (let sample = 1; sample <= metadata.samples; sample += 1) {
-    const v56 = rows.find(
-      row => row.version === 'v5.6' && row.sample === sample
+    const v4 = rows.find(
+      row => row.version === 'v4' && row.sample === sample
     );
     const main = rows.find(
       row => row.version === 'main' && row.sample === sample
     );
-    if (v56 && main) {
+    if (v4 && main) {
       lines.push(
-        `| ${sample} | ${v56.setupSeconds.toFixed(1)} | ${main.setupSeconds.toFixed(1)} | ${(main.setupSeconds - v56.setupSeconds).toFixed(1)} |`
+        `| ${sample} | ${v4.setupSeconds.toFixed(1)} | ${main.setupSeconds.toFixed(1)} | ${(main.setupSeconds - v4.setupSeconds).toFixed(1)} |`
       );
     }
   }
@@ -144,7 +144,7 @@ export async function main(env = process.env) {
     throw new Error('Missing required GitHub Actions environment variables');
   }
 
-  const [jobs, cacheEntries, mainCommit, v56Ref] = await Promise.all([
+  const [jobs, cacheEntries, mainCommit, v4Ref] = await Promise.all([
     allPages(
       `/repos/${owner}/${repo}/actions/runs/${runId}/attempts/${attempt}/jobs`,
       'jobs',
@@ -152,7 +152,7 @@ export async function main(env = process.env) {
     ),
     allPages(`/repos/${owner}/${repo}/actions/caches`, 'actions_caches', token),
     api('/repos/actions/setup-java/commits/main', token),
-    api('/repos/actions/setup-java/git/ref/tags/v5.6.0', token)
+    api('/repos/actions/setup-java/git/ref/tags/v4.8.0', token)
   ]);
 
   const rows = jobs
@@ -176,7 +176,7 @@ export async function main(env = process.env) {
 
   const caches = [];
   for (const [version, versionId] of [
-    ['v5.6', 'v56'],
+    ['v4', 'v4'],
     ['main', 'main']
   ]) {
     const benchmarkId = `focused-${versionId}-${runId}`;
@@ -186,14 +186,16 @@ export async function main(env = process.env) {
         key: `setup-java-Linux-x64-maven-${hashFilesSingle(
           `${benchmarkId}\n`
         )}`
-      },
-      {
+      }
+    ];
+    if (version === 'main') {
+      expected.push({
         type: 'maven-wrapper',
         key: `setup-java-Linux-x64-maven-wrapper-${hashFilesSingle(
           `wrapperVersion=focused\n# benchmark-id=${benchmarkId}\n`
         )}`
-      }
-    ];
+      });
+    }
     for (const item of expected) {
       const entry = cacheEntries.find(cache => cache.key === item.key);
       if (!entry) throw new Error(`Expected cache not found: ${item.key}`);
@@ -213,11 +215,11 @@ export async function main(env = process.env) {
     runAttempt: Number(attempt),
     samples,
     javaVersion,
-    setupJavaV56Ref: v56Ref.object.sha,
+    setupJavaV4Ref: v4Ref.object.sha,
     setupJavaMainRefAtReport: mainCommit.sha,
     generatedAt: new Date().toISOString()
   };
-  const summaries = ['v5.6', 'main'].map(version =>
+  const summaries = ['v4', 'main'].map(version =>
     summarize(rows, version)
   );
   const report = markdown(metadata, rows, summaries, caches);
