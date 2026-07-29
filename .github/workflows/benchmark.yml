@@ -1,0 +1,196 @@
+name: Benchmark setup-java
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Independent cold/warm samples per combination
+        required: true
+        type: choice
+        options:
+          - "1"
+          - "3"
+          - "5"
+        default: "3"
+      java-version:
+        description: Java feature version
+        required: true
+        type: string
+        default: "17"
+      cleanup-caches:
+        description: Delete benchmark caches after measuring them
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  PETCLINIC_REF: f182358d02e4a68e52bdbabf55ca7800288511e7
+
+concurrency:
+  group: setup-java-benchmark
+  cancel-in-progress: false
+
+jobs:
+  v56-cold:
+    name: v5.6 / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [temurin, microsoft]
+        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Isolate benchmark caches
+        env:
+          BENCHMARK_ID: v56-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
+        run: |
+          printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
+          printf '# benchmark-id=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
+      - name: Setup Java v5.6
+        uses: actions/setup-java@v5.6.0
+        with:
+          distribution: ${{ matrix.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record Java environment
+        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+  main-cold:
+    name: main / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [temurin, microsoft]
+        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Isolate benchmark caches
+        env:
+          BENCHMARK_ID: main-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
+        run: |
+          printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
+          printf '# benchmark-id=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
+      - name: Setup Java main
+        uses: actions/setup-java@main
+        with:
+          distribution: ${{ matrix.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record Java environment
+        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+  v56-warm:
+    name: v5.6 / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
+    needs: v56-cold
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [temurin, microsoft]
+        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Reuse benchmark cache identity
+        env:
+          BENCHMARK_ID: v56-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
+        run: |
+          printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
+          printf '# benchmark-id=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
+      - name: Setup Java v5.6
+        uses: actions/setup-java@v5.6.0
+        with:
+          distribution: ${{ matrix.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record Java environment
+        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+  main-warm:
+    name: main / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
+    needs: main-cold
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [temurin, microsoft]
+        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Reuse benchmark cache identity
+        env:
+          BENCHMARK_ID: main-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
+        run: |
+          printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
+          printf '# benchmark-id=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
+      - name: Setup Java main
+        uses: actions/setup-java@main
+        with:
+          distribution: ${{ matrix.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record Java environment
+        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+  report:
+    name: Report
+    needs: [v56-cold, main-cold, v56-warm, main-warm]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Generate benchmark report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ITERATIONS: ${{ inputs.iterations }}
+          JAVA_VERSION: ${{ inputs.java-version }}
+          CLEANUP_CACHES: ${{ inputs.cleanup-caches }}
+        run: node scripts/report.mjs
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: setup-java-benchmark-${{ github.run_id }}
+          path: results/
+          retention-days: 30
