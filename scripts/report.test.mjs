@@ -34,6 +34,18 @@ test('calculates step duration', () => {
 });
 
 test('parses benchmark job names', () => {
+  assert.deepEqual(parseBenchmarkJob('v3 / cold / temurin / 5'), {
+    version: 'v3',
+    phase: 'cold',
+    distribution: 'temurin',
+    iteration: 5
+  });
+  assert.deepEqual(parseBenchmarkJob('v4 / warm / microsoft / 2'), {
+    version: 'v4',
+    phase: 'warm',
+    distribution: 'microsoft',
+    iteration: 2
+  });
   assert.deepEqual(parseBenchmarkJob('v5.2 / warm / microsoft / 1'), {
     version: 'v5.2',
     phase: 'warm',
