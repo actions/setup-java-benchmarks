@@ -255,9 +255,9 @@ export async function main(env = process.env) {
     const versionId = VERSION_IDS.get(row.version);
     const benchmarkId = `${versionId}-${row.distribution}-${row.iteration}-${runId}`;
     const expected =
-      row.version === 'v1'
+      row.version === 'v1' || row.version === 'v2'
         ? []
-        : row.version === 'v2' || row.version === 'v3'
+        : row.version === 'v3'
         ? [
             {
               type: 'maven-dependencies',
