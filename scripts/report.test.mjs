@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  hashFilesSingle,
   median,
   parseBenchmarkJob,
   secondsBetween,
@@ -12,6 +13,10 @@ test('hashes benchmark cache markers', () => {
   assert.equal(
     sha256('benchmark\n'),
     '8f8dbecfd77ab2386b49d723c6b2474f2c22c246805fa0f677bbaf6e4f7bbbfe'
+  );
+  assert.equal(
+    hashFilesSingle('main-microsoft-1-30462682067\n'),
+    'f0c1009aeb8d8582a73a81f3b0146467ed727211971e4052fccd9b7d60817d8f'
   );
 });
 

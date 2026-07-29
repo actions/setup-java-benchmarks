@@ -10,6 +10,11 @@ export function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+export function hashFilesSingle(value) {
+  const contentHash = createHash('sha256').update(value).digest();
+  return createHash('sha256').update(contentHash).digest('hex');
+}
+
 export function secondsBetween(start, end) {
   if (!start || !end) return null;
   return (Date.parse(end) - Date.parse(start)) / 1000;
@@ -91,6 +96,7 @@ function summarize(rows, caches) {
     const versionCaches = caches.filter(cache => cache.version === version);
     const caseTotals = new Map();
     for (const cache of versionCaches) {
+      if (cache.sizeBytes === null) continue;
       const key = `${cache.distribution}-${cache.iteration}`;
       caseTotals.set(key, (caseTotals.get(key) ?? 0) + cache.sizeBytes);
     }
@@ -220,11 +226,13 @@ export async function main(env = process.env) {
     const expected = [
       {
         type: 'maven-dependencies',
-        key: `setup-java-Linux-x64-maven-${sha256(`${benchmarkId}\n`)}`
+        key: `setup-java-Linux-x64-maven-${hashFilesSingle(
+          `${benchmarkId}\n`
+        )}`
       },
       {
         type: 'maven-wrapper',
-        key: `setup-java-Linux-x64-maven-wrapper-${sha256(
+        key: `setup-java-Linux-x64-maven-wrapper-${hashFilesSingle(
           `${wrapperOriginal}# benchmark-id=${benchmarkId}\n`
         )}`
       }
