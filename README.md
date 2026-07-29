@@ -35,7 +35,7 @@ The report job writes a Markdown summary and uploads raw JSON and CSV files. Ben
 
 ### Focused cache restore
 
-The **Focused cache restore** workflow isolates the setup step for comparing v5.6 with `main`. It uses a pinned Temurin JDK from the hosted runner tool cache, seeds synthetic 160 MiB dependency and 9 MiB wrapper caches, and runs no Maven command. Warm measurement jobs therefore contain no JDK or Maven Central downloads; they measure JDK discovery and Actions cache restoration only.
+The **Focused cache restore** workflow isolates the setup step for comparing v4 with `main`. It uses a pinned Temurin JDK from the hosted runner tool cache, seeds a synthetic 160 MiB dependency cache for both versions and a 9 MiB wrapper cache for `main`, and runs no Maven command. Warm measurement jobs therefore contain no JDK or Maven Central downloads; they measure JDK discovery and Actions cache restoration only.
 
 ## Reading results
 

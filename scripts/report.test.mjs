@@ -79,8 +79,8 @@ test('parses focused benchmark job names', () => {
     version: 'main',
     sample: 10
   });
-  assert.deepEqual(parseFocusedJob('v5.6 / warm / 2'), {
-    version: 'v5.6',
+  assert.deepEqual(parseFocusedJob('v4 / warm / 2'), {
+    version: 'v4',
     sample: 2
   });
   assert.equal(parseFocusedJob('Seed main caches'), null);
