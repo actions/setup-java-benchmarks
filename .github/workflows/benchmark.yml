@@ -35,6 +35,68 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  v3-cold:
+    name: v3 / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [temurin, microsoft]
+        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Isolate benchmark caches
+        env:
+          BENCHMARK_ID: v3-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
+        run: printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
+      - name: Setup Java v3
+        uses: actions/setup-java@v3.14.1
+        with:
+          distribution: ${{ matrix.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record Java environment
+        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress compile
+
+  v4-cold:
+    name: v4 / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [temurin, microsoft]
+        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Isolate benchmark caches
+        env:
+          BENCHMARK_ID: v4-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
+        run: printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
+      - name: Setup Java v4
+        uses: actions/setup-java@v4.8.0
+        with:
+          distribution: ${{ matrix.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record Java environment
+        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress compile
+
   v52-cold:
     name: v5.2 / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
     runs-on: ubuntu-24.04
@@ -64,7 +126,7 @@ jobs:
       - name: Record Java environment
         run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
       - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress verify
+        run: ./mvnw --batch-mode --no-transfer-progress compile
 
   v56-cold:
     name: v5.6 / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
@@ -97,7 +159,7 @@ jobs:
       - name: Record Java environment
         run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
       - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress verify
+        run: ./mvnw --batch-mode --no-transfer-progress compile
 
   main-cold:
     name: main / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
@@ -130,7 +192,73 @@ jobs:
       - name: Record Java environment
         run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
       - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress verify
+        run: ./mvnw --batch-mode --no-transfer-progress compile
+
+  v3-warm:
+    name: v3 / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
+    needs: v3-cold
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [temurin, microsoft]
+        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Reuse benchmark cache identity
+        env:
+          BENCHMARK_ID: v3-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
+        run: printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
+      - name: Setup Java v3
+        uses: actions/setup-java@v3.14.1
+        with:
+          distribution: ${{ matrix.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record Java environment
+        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress compile
+
+  v4-warm:
+    name: v4 / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
+    needs: v4-cold
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [temurin, microsoft]
+        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Reuse benchmark cache identity
+        env:
+          BENCHMARK_ID: v4-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
+        run: printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
+      - name: Setup Java v4
+        uses: actions/setup-java@v4.8.0
+        with:
+          distribution: ${{ matrix.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record Java environment
+        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress compile
 
   v52-warm:
     name: v5.2 / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
@@ -163,7 +291,7 @@ jobs:
       - name: Record Java environment
         run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
       - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress verify
+        run: ./mvnw --batch-mode --no-transfer-progress compile
 
   v56-warm:
     name: v5.6 / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
@@ -198,7 +326,7 @@ jobs:
       - name: Record Java environment
         run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
       - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress verify
+        run: ./mvnw --batch-mode --no-transfer-progress compile
 
   main-warm:
     name: main / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
@@ -233,11 +361,11 @@ jobs:
       - name: Record Java environment
         run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
       - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress verify
+        run: ./mvnw --batch-mode --no-transfer-progress compile
 
   report:
     name: Report
-    needs: [v52-cold, v56-cold, main-cold, v52-warm, v56-warm, main-warm]
+    needs: [v3-cold, v4-cold, v52-cold, v56-cold, main-cold, v3-warm, v4-warm, v52-warm, v56-warm, main-warm]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:

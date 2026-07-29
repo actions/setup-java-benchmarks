@@ -1,6 +1,6 @@
 # setup-java benchmarks
 
-This repository compares [`actions/setup-java@v5.2.0`](https://github.com/actions/setup-java/releases/tag/v5.2.0), [`actions/setup-java@v5.6.0`](https://github.com/actions/setup-java/releases/tag/v5.6.0), and the unreleased [`actions/setup-java@main`](https://github.com/actions/setup-java/tree/main) using [Spring PetClinic](https://github.com/spring-projects/spring-petclinic).
+This repository compares [`actions/setup-java@v3.14.1`](https://github.com/actions/setup-java/releases/tag/v3.14.1), [`actions/setup-java@v4.8.0`](https://github.com/actions/setup-java/releases/tag/v4.8.0), [`actions/setup-java@v5.2.0`](https://github.com/actions/setup-java/releases/tag/v5.2.0), [`actions/setup-java@v5.6.0`](https://github.com/actions/setup-java/releases/tag/v5.6.0), and the unreleased [`actions/setup-java@main`](https://github.com/actions/setup-java/tree/main) using [Spring PetClinic](https://github.com/spring-projects/spring-petclinic).
 
 The benchmark is designed around the two costs that matter to Actions users:
 
@@ -21,7 +21,7 @@ Every combination gets an isolated cache key and runs twice:
 1. **Cold:** no dependency or wrapper cache exists; the post action saves every cache supported by that version.
 2. **Warm:** restores the caches created by the matching cold job.
 
-v5.2 caches only Maven dependencies. v5.6 and `main` also cache the Maven Wrapper distribution separately, making the storage and execution-time tradeoff visible.
+v3, v4, and v5.2 cache only Maven dependencies. v5.6 and `main` also cache the Maven Wrapper distribution separately, making the storage and execution-time tradeoff visible.
 
 Spring PetClinic and third-party actions are pinned to commits. `setup-java@main` intentionally remains a moving ref so each run evaluates the current upcoming v6 code; the report records the `main` commit observed when it is generated.
 
@@ -36,7 +36,7 @@ The report job writes a Markdown summary and uploads raw JSON and CSV files. Ben
 The summary reports medians for:
 
 - setup time, including JDK discovery/download and dependency-cache restore;
-- Spring PetClinic build time;
+- Spring PetClinic `compile` time;
 - the `setup-java` post step that saves caches;
 - compressed cache storage per isolated case;
 - estimated billed minutes, calculated by rounding each Linux job to a whole minute.

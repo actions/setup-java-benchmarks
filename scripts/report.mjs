@@ -3,14 +3,16 @@ import {mkdir, writeFile, appendFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 
 const API_VERSION = '2022-11-28';
-const VERSIONS = ['v5.2', 'v5.6', 'main'];
+const VERSIONS = ['v3', 'v4', 'v5.2', 'v5.6', 'main'];
 const VERSION_IDS = new Map([
+  ['v3', 'v3'],
+  ['v4', 'v4'],
   ['v5.2', 'v52'],
   ['v5.6', 'v56'],
   ['main', 'main']
 ]);
 const JOB_PATTERN =
-  /^(v5\.2|v5\.6|main) \/ (cold|warm) \/ (temurin|microsoft) \/ (\d+)$/;
+  /^(v3|v4|v5\.2|v5\.6|main) \/ (cold|warm) \/ (temurin|microsoft) \/ (\d+)$/;
 
 export function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -179,8 +181,16 @@ export async function main(env = process.env) {
     throw new Error('Missing required GitHub Actions environment variables');
   }
 
-  const [jobs, cacheEntries, wrapperResponse, mainCommit, v52Ref, v56Ref] =
-    await Promise.all([
+  const [
+    jobs,
+    cacheEntries,
+    wrapperResponse,
+    mainCommit,
+    v3Ref,
+    v4Ref,
+    v52Ref,
+    v56Ref
+  ] = await Promise.all([
       allPages(
         `/repos/${owner}/${repo}/actions/runs/${runId}/attempts/${attempt}/jobs`,
         'jobs',
@@ -192,6 +202,8 @@ export async function main(env = process.env) {
         token
       ),
       api('/repos/actions/setup-java/commits/main', token),
+      api('/repos/actions/setup-java/git/ref/tags/v3.14.1', token),
+      api('/repos/actions/setup-java/git/ref/tags/v4.8.0', token),
       api('/repos/actions/setup-java/git/ref/tags/v5.2.0', token),
       api('/repos/actions/setup-java/git/ref/tags/v5.6.0', token)
     ]);
@@ -238,7 +250,7 @@ export async function main(env = process.env) {
         )}`
       },
     ];
-    if (row.version !== 'v5.2') {
+    if (row.version === 'v5.6' || row.version === 'main') {
       expected.push({
         type: 'maven-wrapper',
         key: `setup-java-Linux-x64-maven-wrapper-${hashFilesSingle(
@@ -272,6 +284,8 @@ export async function main(env = process.env) {
     javaVersion: env.JAVA_VERSION,
     iterations: Number(env.ITERATIONS),
     petclinicRef,
+    setupJavaV3Ref: v3Ref.object.sha,
+    setupJavaV4Ref: v4Ref.object.sha,
     setupJavaV52Ref: v52Ref.object.sha,
     setupJavaV56Ref: v56Ref.object.sha,
     setupJavaMainRefAtReport: mainCommit.sha,
