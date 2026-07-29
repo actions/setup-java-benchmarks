@@ -53,14 +53,13 @@ jobs:
       - name: Isolate benchmark caches
         env:
           BENCHMARK_ID: v3-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
+        run: printf '<!-- benchmark-id=%s -->\n' "$BENCHMARK_ID" >> pom.xml
       - name: Setup Java v3
         uses: actions/setup-java@v3.14.1
         with:
           distribution: ${{ matrix.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
-          cache-dependency-path: .benchmark-cache-key
       - name: Record Java environment
         run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
       - name: Build PetClinic
@@ -214,14 +213,13 @@ jobs:
       - name: Reuse benchmark cache identity
         env:
           BENCHMARK_ID: v3-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
+        run: printf '<!-- benchmark-id=%s -->\n' "$BENCHMARK_ID" >> pom.xml
       - name: Setup Java v3
         uses: actions/setup-java@v3.14.1
         with:
           distribution: ${{ matrix.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
-          cache-dependency-path: .benchmark-cache-key
       - name: Record Java environment
         run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
       - name: Build PetClinic
