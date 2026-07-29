@@ -3,8 +3,10 @@ import {mkdir, writeFile, appendFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 
 const API_VERSION = '2022-11-28';
-const VERSIONS = ['v3', 'v4', 'v5.2', 'v5.6', 'main'];
+const VERSIONS = ['v1', 'v2', 'v3', 'v4', 'v5.2', 'v5.6', 'main'];
 const VERSION_IDS = new Map([
+  ['v1', 'v1'],
+  ['v2', 'v2'],
   ['v3', 'v3'],
   ['v4', 'v4'],
   ['v5.2', 'v52'],
@@ -12,7 +14,7 @@ const VERSION_IDS = new Map([
   ['main', 'main']
 ]);
 const JOB_PATTERN =
-  /^(v3|v4|v5\.2|v5\.6|main) \/ (cold|warm) \/ (temurin|microsoft) \/ (\d+)$/;
+  /^(v1|v2|v3|v4|v5\.2|v5\.6|main) \/ (cold|warm) \/ (zulu|temurin|microsoft) \/ (\d+)$/;
 
 export function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -187,6 +189,8 @@ export async function main(env = process.env) {
     wrapperResponse,
     pomResponse,
     mainCommit,
+    v1Ref,
+    v2Ref,
     v3Ref,
     v4Ref,
     v52Ref,
@@ -207,6 +211,8 @@ export async function main(env = process.env) {
         token
       ),
       api('/repos/actions/setup-java/commits/main', token),
+      api('/repos/actions/setup-java/git/ref/tags/v1.4.4', token),
+      api('/repos/actions/setup-java/git/ref/tags/v2.5.1', token),
       api('/repos/actions/setup-java/git/ref/tags/v3.14.1', token),
       api('/repos/actions/setup-java/git/ref/tags/v4.8.0', token),
       api('/repos/actions/setup-java/git/ref/tags/v5.2.0', token),
@@ -249,7 +255,9 @@ export async function main(env = process.env) {
     const versionId = VERSION_IDS.get(row.version);
     const benchmarkId = `${versionId}-${row.distribution}-${row.iteration}-${runId}`;
     const expected =
-      row.version === 'v3'
+      row.version === 'v1'
+        ? []
+        : row.version === 'v2' || row.version === 'v3'
         ? [
             {
               type: 'maven-dependencies',
@@ -300,6 +308,8 @@ export async function main(env = process.env) {
     javaVersion: env.JAVA_VERSION,
     iterations: Number(env.ITERATIONS),
     petclinicRef,
+    setupJavaV1Ref: v1Ref.object.sha,
+    setupJavaV2Ref: v2Ref.object.sha,
     setupJavaV3Ref: v3Ref.object.sha,
     setupJavaV4Ref: v4Ref.object.sha,
     setupJavaV52Ref: v52Ref.object.sha,

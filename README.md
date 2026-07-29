@@ -1,6 +1,6 @@
 # setup-java benchmarks
 
-This repository compares [`actions/setup-java@v3.14.1`](https://github.com/actions/setup-java/releases/tag/v3.14.1), [`actions/setup-java@v4.8.0`](https://github.com/actions/setup-java/releases/tag/v4.8.0), [`actions/setup-java@v5.2.0`](https://github.com/actions/setup-java/releases/tag/v5.2.0), [`actions/setup-java@v5.6.0`](https://github.com/actions/setup-java/releases/tag/v5.6.0), and the unreleased [`actions/setup-java@main`](https://github.com/actions/setup-java/tree/main) using [Spring PetClinic](https://github.com/spring-projects/spring-petclinic).
+This repository compares [`actions/setup-java@v1.4.4`](https://github.com/actions/setup-java/releases/tag/v1.4.4), [`actions/setup-java@v2.5.1`](https://github.com/actions/setup-java/releases/tag/v2.5.1), [`actions/setup-java@v3.14.1`](https://github.com/actions/setup-java/releases/tag/v3.14.1), [`actions/setup-java@v4.8.0`](https://github.com/actions/setup-java/releases/tag/v4.8.0), [`actions/setup-java@v5.2.0`](https://github.com/actions/setup-java/releases/tag/v5.2.0), [`actions/setup-java@v5.6.0`](https://github.com/actions/setup-java/releases/tag/v5.6.0), and the unreleased [`actions/setup-java@main`](https://github.com/actions/setup-java/tree/main) using [Spring PetClinic](https://github.com/spring-projects/spring-petclinic).
 
 The benchmark is designed around the two costs that matter to Actions users:
 
@@ -16,12 +16,14 @@ Each action version runs with Java 17 on `ubuntu-24.04`:
 | Eclipse Temurin | Hosted runner tool-cache hit | Measures setup overhead when the JDK is already available |
 | Microsoft Build of OpenJDK | JDK download and extraction | Measures setup overhead when the JDK must be installed |
 
+v1 predates distribution selection and integrated dependency caching. It runs only its native Zulu installer path and therefore has no Maven cache storage; its cold/warm labels are repeated uncached samples. v2 and later run the Temurin and Microsoft scenarios.
+
 Every combination gets an isolated cache key and runs twice:
 
 1. **Cold:** no dependency or wrapper cache exists; the post action saves every cache supported by that version.
 2. **Warm:** restores the caches created by the matching cold job.
 
-v3, v4, and v5.2 cache only Maven dependencies. v5.6 and `main` also cache the Maven Wrapper distribution separately, making the storage and execution-time tradeoff visible. Because v3 predates `cache-dependency-path`, its benchmark identity is an inert XML comment appended to `pom.xml`; later versions use a dedicated marker file.
+v2, v3, v4, and v5.2 cache only Maven dependencies. v5.6 and `main` also cache the Maven Wrapper distribution separately, making the storage and execution-time tradeoff visible. Because v2 and v3 predate `cache-dependency-path`, their benchmark identity is an inert XML comment appended to `pom.xml`; later versions use a dedicated marker file.
 
 Spring PetClinic and third-party actions are pinned to commits. `setup-java@main` intentionally remains a moving ref so each run evaluates the current upcoming v6 code; the report records the `main` commit observed when it is generated.
 
