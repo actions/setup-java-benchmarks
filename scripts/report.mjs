@@ -3,8 +3,14 @@ import {mkdir, writeFile, appendFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 
 const API_VERSION = '2022-11-28';
+const VERSIONS = ['v5.2', 'v5.6', 'main'];
+const VERSION_IDS = new Map([
+  ['v5.2', 'v52'],
+  ['v5.6', 'v56'],
+  ['main', 'main']
+]);
 const JOB_PATTERN =
-  /^(v5\.6|main) \/ (cold|warm) \/ (temurin|microsoft) \/ (\d+)$/;
+  /^(v5\.2|v5\.6|main) \/ (cold|warm) \/ (temurin|microsoft) \/ (\d+)$/;
 
 export function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -89,7 +95,7 @@ function stepDuration(job, predicate) {
 }
 
 function summarize(rows, caches) {
-  return ['v5.6', 'main'].map(version => {
+  return VERSIONS.map(version => {
     const versionRows = rows.filter(row => row.version === version);
     const coldRows = versionRows.filter(row => row.phase === 'cold');
     const warmRows = versionRows.filter(row => row.phase === 'warm');
@@ -173,7 +179,7 @@ export async function main(env = process.env) {
     throw new Error('Missing required GitHub Actions environment variables');
   }
 
-  const [jobs, cacheEntries, wrapperResponse, mainCommit, v56Ref] =
+  const [jobs, cacheEntries, wrapperResponse, mainCommit, v52Ref, v56Ref] =
     await Promise.all([
       allPages(
         `/repos/${owner}/${repo}/actions/runs/${runId}/attempts/${attempt}/jobs`,
@@ -186,6 +192,7 @@ export async function main(env = process.env) {
         token
       ),
       api('/repos/actions/setup-java/commits/main', token),
+      api('/repos/actions/setup-java/git/ref/tags/v5.2.0', token),
       api('/repos/actions/setup-java/git/ref/tags/v5.6.0', token)
     ]);
 
@@ -221,7 +228,7 @@ export async function main(env = process.env) {
   const coldCases = rows.filter(row => row.phase === 'cold');
   const caches = [];
   for (const row of coldCases) {
-    const versionId = row.version === 'v5.6' ? 'v56' : 'main';
+    const versionId = VERSION_IDS.get(row.version);
     const benchmarkId = `${versionId}-${row.distribution}-${row.iteration}-${runId}`;
     const expected = [
       {
@@ -230,13 +237,15 @@ export async function main(env = process.env) {
           `${benchmarkId}\n`
         )}`
       },
-      {
+    ];
+    if (row.version !== 'v5.2') {
+      expected.push({
         type: 'maven-wrapper',
         key: `setup-java-Linux-x64-maven-wrapper-${hashFilesSingle(
           `${wrapperOriginal}# benchmark-id=${benchmarkId}\n`
         )}`
-      }
-    ];
+      });
+    }
     for (const item of expected) {
       const entry = cacheEntries.find(cache => cache.key === item.key);
       caches.push({
@@ -263,6 +272,7 @@ export async function main(env = process.env) {
     javaVersion: env.JAVA_VERSION,
     iterations: Number(env.ITERATIONS),
     petclinicRef,
+    setupJavaV52Ref: v52Ref.object.sha,
     setupJavaV56Ref: v56Ref.object.sha,
     setupJavaMainRefAtReport: mainCommit.sha,
     generatedAt: new Date().toISOString()
