@@ -21,7 +21,7 @@ Every combination gets an isolated cache key and runs twice:
 1. **Cold:** no dependency or wrapper cache exists; the post action saves every cache supported by that version.
 2. **Warm:** restores the caches created by the matching cold job.
 
-v3, v4, and v5.2 cache only Maven dependencies. v5.6 and `main` also cache the Maven Wrapper distribution separately, making the storage and execution-time tradeoff visible.
+v3, v4, and v5.2 cache only Maven dependencies. v5.6 and `main` also cache the Maven Wrapper distribution separately, making the storage and execution-time tradeoff visible. Because v3 predates `cache-dependency-path`, its benchmark identity is an inert XML comment appended to `pom.xml`; later versions use a dedicated marker file.
 
 Spring PetClinic and third-party actions are pinned to commits. `setup-java@main` intentionally remains a moving ref so each run evaluates the current upcoming v6 code; the report records the `main` commit observed when it is generated.
 

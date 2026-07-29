@@ -185,6 +185,7 @@ export async function main(env = process.env) {
     jobs,
     cacheEntries,
     wrapperResponse,
+    pomResponse,
     mainCommit,
     v3Ref,
     v4Ref,
@@ -199,6 +200,10 @@ export async function main(env = process.env) {
       allPages(`/repos/${owner}/${repo}/actions/caches`, 'actions_caches', token),
       api(
         `/repos/spring-projects/spring-petclinic/contents/.mvn/wrapper/maven-wrapper.properties?ref=${petclinicRef}`,
+        token
+      ),
+      api(
+        `/repos/spring-projects/spring-petclinic/contents/pom.xml?ref=${petclinicRef}`,
         token
       ),
       api('/repos/actions/setup-java/commits/main', token),
@@ -237,19 +242,30 @@ export async function main(env = process.env) {
   const wrapperOriginal = Buffer.from(wrapperResponse.content, 'base64').toString(
     'utf8'
   );
+  const pomOriginal = Buffer.from(pomResponse.content, 'base64').toString('utf8');
   const coldCases = rows.filter(row => row.phase === 'cold');
   const caches = [];
   for (const row of coldCases) {
     const versionId = VERSION_IDS.get(row.version);
     const benchmarkId = `${versionId}-${row.distribution}-${row.iteration}-${runId}`;
-    const expected = [
-      {
-        type: 'maven-dependencies',
-        key: `setup-java-Linux-x64-maven-${hashFilesSingle(
-          `${benchmarkId}\n`
-        )}`
-      },
-    ];
+    const expected =
+      row.version === 'v3'
+        ? [
+            {
+              type: 'maven-dependencies',
+              key: `setup-java-Linux-maven-${hashFilesSingle(
+                `${pomOriginal}<!-- benchmark-id=${benchmarkId} -->\n`
+              )}`
+            }
+          ]
+        : [
+            {
+              type: 'maven-dependencies',
+              key: `setup-java-Linux-x64-maven-${hashFilesSingle(
+                `${benchmarkId}\n`
+              )}`
+            }
+          ];
     if (row.version === 'v5.6' || row.version === 'main') {
       expected.push({
         type: 'maven-wrapper',
