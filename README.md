@@ -33,6 +33,10 @@ Open **Actions > Benchmark setup-java > Run workflow**. Choose one, three, or fi
 
 The report job writes a Markdown summary and uploads raw JSON and CSV files. Benchmark-created caches are deleted after measurement by default, preventing repeated runs from consuming repository cache storage. Disable cleanup when you need to inspect the entries manually.
 
+### Focused cache restore
+
+The **Focused cache restore** workflow isolates the setup step for comparing v5.6 with `main`. It uses a pinned Temurin JDK from the hosted runner tool cache, seeds synthetic 160 MiB dependency and 9 MiB wrapper caches, and runs no Maven command. Warm measurement jobs therefore contain no JDK or Maven Central downloads; they measure JDK discovery and Actions cache restoration only.
+
 ## Reading results
 
 The summary reports medians for:
