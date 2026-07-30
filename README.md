@@ -37,6 +37,12 @@ The report job writes a Markdown summary and uploads raw JSON and CSV files. Ben
 
 The **Focused cache restore** workflow isolates the setup step for comparing v4 with `main`. It uses a pinned Temurin JDK from the hosted runner tool cache, seeds a synthetic 160 MiB dependency cache for both versions and a 9 MiB wrapper cache for `main`, and runs no Maven command. Warm measurement jobs therefore contain no JDK or Maven Central downloads; they measure JDK discovery and Actions cache restoration only.
 
+### Maven configuration warm path
+
+The **Maven configuration warm path** workflow compares two `actions/setup-java` refs in the action's own Maven configuration path. It checks out a configurable setup-java repository, runs baseline and candidate refs on Linux, Windows, and macOS, and covers Maven cache, Gradle cache, no-cache, single-version, multi-version, empty toolchains, and existing toolchains scenarios.
+
+Each matrix entry alternates three warm in-job setup runs for the baseline and candidate implementations, then reports median and p95 setup time. The workflow also records `dist/setup/index.js`, total `dist/setup` JavaScript bytes, and the JavaScript chunk files containing the XML parser.
+
 ## Reading results
 
 The summary reports medians for:
@@ -55,4 +61,6 @@ Network throughput, hosted-runner image changes, upstream artifact availability,
 
 ```bash
 npm test
+bash -n scripts/*.sh
+shellcheck scripts/*.sh
 ```
