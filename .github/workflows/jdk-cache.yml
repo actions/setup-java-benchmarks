@@ -1,12 +1,6 @@
 name: JDK cache benchmark
 
 on:
-  workflow_call:
-    inputs:
-      cleanup-caches:
-        description: Delete benchmark caches after measuring them
-        required: true
-        type: boolean
   workflow_dispatch:
     inputs:
       cleanup-caches:

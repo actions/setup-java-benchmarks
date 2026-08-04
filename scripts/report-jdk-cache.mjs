@@ -4,7 +4,7 @@ import {pathToFileURL} from 'node:url';
 import {hashFilesSingle, secondsBetween} from './report.mjs';
 
 const API_VERSION = '2022-11-28';
-const JOB_PATTERN = /^(?:benchmark \/ )?(baseline|candidate) \/ (cold|warm)$/;
+const JOB_PATTERN = /^(baseline|candidate) \/ (cold|warm)$/;
 const JDK_CACHE_PREFIX = 'setup-java-jdk-v1-Linux-x64-';
 
 export function parseJdkCacheJob(name) {
