@@ -96,5 +96,9 @@ test('parses JDK cache benchmark job names', () => {
     variant: 'candidate',
     phase: 'warm'
   });
+  assert.deepEqual(parseJdkCacheJob('benchmark / candidate / warm'), {
+    variant: 'candidate',
+    phase: 'warm'
+  });
   assert.equal(parseJdkCacheJob('Report'), null);
 });
