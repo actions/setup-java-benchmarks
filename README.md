@@ -43,6 +43,12 @@ The **Maven configuration warm path** workflow compares two `actions/setup-java`
 
 Each matrix entry alternates three warm in-job setup runs for the baseline and candidate implementations, then reports median and p95 setup time. The workflow also records `dist/setup/index.js`, total `dist/setup` JavaScript bytes, and the JavaScript chunk files containing the XML parser.
 
+### JDK cache benchmark
+
+The **JDK cache benchmark** workflow compares pinned baseline and candidate commits using Microsoft OpenJDK 17.0.19 and Spring PetClinic on `ubuntu-24.04`. Each run has isolated Maven dependency and wrapper caches, with separate cold and warm jobs for both variants. The candidate uses its default-on JDK cache; the baseline downloads the same JDK in both jobs.
+
+JDK cache keys cannot be salted without changing the JDK identity. Run samples sequentially with cache cleanup enabled so each candidate cold job starts without a JDK cache and its matching warm job restores the cache created in that run.
+
 ## Reading results
 
 The summary reports medians for:

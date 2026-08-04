@@ -9,6 +9,7 @@ import {
   sha256
 } from './report.mjs';
 import {parseFocusedJob} from './report-focused.mjs';
+import {parseJdkCacheJob} from './report-jdk-cache.mjs';
 
 test('hashes benchmark cache markers', () => {
   assert.equal(
@@ -84,4 +85,16 @@ test('parses focused benchmark job names', () => {
     sample: 2
   });
   assert.equal(parseFocusedJob('Seed main caches'), null);
+});
+
+test('parses JDK cache benchmark job names', () => {
+  assert.deepEqual(parseJdkCacheJob('baseline / cold'), {
+    variant: 'baseline',
+    phase: 'cold'
+  });
+  assert.deepEqual(parseJdkCacheJob('candidate / warm'), {
+    variant: 'candidate',
+    phase: 'warm'
+  });
+  assert.equal(parseJdkCacheJob('Report'), null);
 });
