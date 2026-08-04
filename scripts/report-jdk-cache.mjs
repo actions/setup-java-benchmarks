@@ -91,12 +91,16 @@ function markdown(metadata, rows, caches) {
 }
 
 export async function main(env = process.env) {
-  const [owner, repo] = env.GITHUB_REPOSITORY.split('/');
+  const repository = env.GITHUB_REPOSITORY;
   const token = env.GH_TOKEN;
   const runId = env.GITHUB_RUN_ID;
   const attempt = env.GITHUB_RUN_ATTEMPT;
   const petclinicRef = env.PETCLINIC_REF;
-  if (!owner || !repo || !token || !runId || !attempt || !petclinicRef) {
+  if (!repository || !token || !runId || !attempt || !petclinicRef) {
+    throw new Error('Missing required GitHub Actions environment variables');
+  }
+  const [owner, repo] = repository.split('/');
+  if (!owner || !repo) {
     throw new Error('Missing required GitHub Actions environment variables');
   }
 
@@ -226,12 +230,13 @@ export async function main(env = process.env) {
   await appendFile(env.GITHUB_STEP_SUMMARY, report);
 
   if (env.CLEANUP_CACHES === 'true') {
-    for (const id of new Set(caches.map(cache => cache.id))) {
+    const ids = [...new Set(caches.map(cache => cache.id))];
+    for (const id of ids) {
       await api(`/repos/${owner}/${repo}/actions/caches/${id}`, token, {
         method: 'DELETE'
       });
     }
-    console.log(`Deleted ${caches.length} JDK benchmark cache entries`);
+    console.log(`Deleted ${ids.length} JDK benchmark cache entries`);
   }
 }
 
