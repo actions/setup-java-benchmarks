@@ -52,17 +52,17 @@ Caching is a chain, and a benchmark is only useful if it says which link it is m
 
 ### Which release to compare against
 
-The pairwise workflows — **Action overhead**, **Transfer overlap** and **Cache save** — take `baseline-ref` as a choice of three releases, defaulting to the newest:
+The pairwise workflows default to the newest release, but not every scenario can offer every baseline. Restore-based workflows require both refs to compute the same cache key for the same tree; **Cache save** does not, because every slot must write a fresh key anyway.
 
-| Baseline | Why it is on the list                                                                                                                                                   |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `v5.6.0` | The newest release. `main` against this is the change set that has not shipped yet, and it is the only comparison where a difference points at a specific pull request. |
-| `v5.2.0` | Before the v5 cache work settled. Widens the window to the whole of v5 without leaving the versions that share a cache key scheme.                                      |
-| `v4.9.1` | The last v4. The oldest release that still takes `cache-dependency-path`, so it can restore the _same_ cache entry as `main` rather than one of its own.                |
+| Baseline | Why it is on the list                                                                                                                                                                    |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `v5.6.0` | The newest release. `main` against this is the change set that has not shipped yet, and it is the only comparison where a difference points at a specific pull request.                  |
+| `v5.2.0` | Before the v5 cache work settled. Widens the window to the whole of v5 without leaving the versions that share a cache key scheme.                                                       |
+| `v4.9.1` | The last v4. Meaningful for **Cache save** and the version sweep, but not for restore-overlap comparisons because it computes a different Maven cache key from `main` for the same tree. |
 
-Nothing older is offered. v3 and earlier predate `cache-dependency-path` and so restore an entry of their own, and a stored blob's throughput is fixed for the life of that entry — the version difference is then confounded with blob placement, which pairing cannot remove. v1's bundled cache client is rejected by the current cache service outright. Those versions are still measured by the version sweep, which reports them without ranking them, and that is the right place for them.
+Nothing older is offered. v3 and earlier predate `cache-dependency-path` and so restore an entry of their own, and a stored blob's throughput is fixed for the life of that entry — the version difference is then confounded with blob placement, which pairing cannot remove. v1's bundled cache client is rejected by the current cache service outright. v4.9.1 is tracked in [#25](https://github.com/actions/setup-java-benchmarks/issues/25) for the same shared-key limitation. Those versions are still measured by the version sweep, which reports them without ranking them, and that is the right place for them.
 
-Run a workflow once per baseline to get all three comparisons; each run is self-contained, so they can be dispatched together.
+Run **Action overhead** and **Transfer overlap** once for `v5.6.0` and once for `v5.2.0`. Run **Cache save** for all three baselines, including `v4.9.1`.
 
 The sizes in the third column are the design, not an accident. setup-java does not move the bytes itself — it hands the transfer to `@actions/cache` — so a benchmark with a large fixture measures the network and a benchmark with a small one measures the action. **Action overhead** and **Transfer overlap** are deliberately the same measurement at two fixture sizes for exactly that reason, and together they decompose a restore into the part setup-java controls and the part it does not.
 
@@ -81,15 +81,16 @@ A seed job compiles Spring PetClinic once to populate a single Maven cache entry
 
 **`main` is the thing under test, not the thing being ranked.** `main` is the newest code, and every released version is a baseline it is measured against, exactly as the two-arm workflows measure a candidate against a baseline. So the reported difference is `main` minus the version, and the verdict describes `main`: an `improvement` means `main` is faster than that version. Differencing the other way would label a released version a `regression` for being slower than the code that succeeded it, which inverts what was actually measured — the finding there is that `main` got faster.
 
-**Only comparable versions are ranked.** v4, v5.2, v5.6 and `main` all restore the same seeded entry through `cache-dependency-path`, so a difference between them is a difference in the implementation. `main` is ranked against each of them, with Holm's step-down correction across that family: it is tested against every one of them in one run, so without a correction the chance that one comparison clears 0.05 by luck is far above 0.05.
+**Only comparable versions are ranked.** v5.2, v5.6 and `main` all restore the same seeded entry through `cache-dependency-path`, so a difference between them is a difference in the implementation. `main` is ranked against each of them, with Holm's step-down correction across that family: it is tested against every one of them in one run, so without a correction the chance that one comparison clears 0.05 by luck is far above 0.05.
 
 v1, v2 and v3 are measured on the same runners and published, but they carry no verdict, because a verdict would report a difference in the _workload_ as though it were a difference in the implementation:
 
-| Version | Why it is not ranked                                                                                                                                  |
-| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v1.4.4  | Installs its own JDK and does no dependency caching                                                                                                   |
-| v2.5.1  | Its bundled cache client is rejected by the current cache service, so it restores nothing                                                             |
-| v3.14.1 | Predates `cache-dependency-path` and keys on `pom.xml`, so it restores its own entry — the blob confound described above, which pairing cannot remove |
+| Version | Why it is not ranked                                                                                                                                    |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.4.4  | Installs its own JDK and does no dependency caching                                                                                                     |
+| v2.5.1  | Its bundled cache client is rejected by the current cache service, so it restores nothing                                                               |
+| v3.14.1 | Predates `cache-dependency-path` and keys on `pom.xml`, so it restores its own entry — the blob confound described above, which pairing cannot remove   |
+| v4.9.1  | Takes `cache-dependency-path`, but computes a different key from `main` for the same fixture in the pairwise restore harness, so it is still confounded |
 
 v3 is the instructive case. In run 30979614347 it took 3.69 s and 3.89 s on two runners that ran v4 in 0.50 s and 0.52 s moments later in the same job. A sevenfold gap that appears on some runners and not others is blob placement, not code, and ranking it would have published a verdict for it.
 

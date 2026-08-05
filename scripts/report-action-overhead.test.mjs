@@ -122,6 +122,31 @@ test("differences candidate minus baseline, so a slower candidate is positive", 
   assert.ok(analysis.interval.estimate > 0);
 });
 
+test("uses the Holm-adjusted p-value for split verdicts", () => {
+  const rows = matrix({ shift: -500 });
+  const analysis = subsetAnalysis(rows, () => true);
+  const rendered = markdown(
+    {
+      setupJavaRepository: "actions/setup-java",
+      baselineRef: "v5.6.0",
+      candidateRef: "main",
+      runId: "1",
+    },
+    analysis,
+    [{ label: "Synthetic split", analysis, adjustedP: 0.2 }],
+    [],
+    decompose(rows),
+    [],
+    [],
+  );
+
+  const splitRow = rendered
+    .split("\n")
+    .find((line) => line.startsWith("| Synthetic split"));
+  assert.match(splitRow, /0\.200/);
+  assert.doesNotMatch(splitRow, /improvement|regression/);
+});
+
 test("flags a hit profile that actually missed", () => {
   const rows = matrix().map((row) =>
     row.cache === "maven-hit" && row.os === "ubuntu-latest"

@@ -68,9 +68,9 @@ test("removes between-runner speed differences", () => {
     .map((sample) => sweep(sample, 0.5 + sample * 0.5, perVersion))
     .join("\n");
   const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
-  const v4 = analysis.comparisons.find((entry) => entry.arm === "v4");
-  assert.ok(Math.abs(v4.differenceSeconds + 1.125) < 0.001);
-  assert.equal(v4.verdict, "improvement");
+  const v52 = analysis.comparisons.find((entry) => entry.arm === "v52");
+  assert.ok(Math.abs(v52.differenceSeconds + 1.125) < 0.001);
+  assert.equal(v52.verdict, "improvement");
 });
 
 // main is the newest code. Reporting a released version as a `regression` for
@@ -141,8 +141,8 @@ test("ranks only versions that do the same work from the same blob", () => {
   // v1 and v2 restore nothing and v3 restores its own cache entry, so none of
   // them measures the same work as main. Ranking them would report a difference
   // in the workload as though it were a difference in the implementation.
-  assert.deepEqual(COMPARABLE_ARMS, ["v4", "v52", "v56", "main"]);
-  for (const arm of ["v1", "v2", "v3"]) {
+  assert.deepEqual(COMPARABLE_ARMS, ["v52", "v56", "main"]);
+  for (const arm of ["v1", "v2", "v3", "v4"]) {
     const entry = VERSIONS.find((item) => item.arm === arm);
     assert.equal(entry.comparable, false);
     assert.ok(entry.reason.length > 0);
@@ -170,9 +170,9 @@ test("never gives a verdict to a version it cannot rank", () => {
 });
 
 test("applies Holm correction across the ranked family", () => {
-  // Three versions are tested against main in one run. A raw p-value near the
+  // Two released versions are tested against main in one run. A raw p-value near the
   // boundary must not survive the correction as a verdict.
-  const perVersion = { ...flat, v4: 3040, v52: 3040, v56: 3040 };
+  const perVersion = { ...flat, v52: 3040, v56: 3040 };
   const csv = [1, 2, 3, 4, 5, 6, 7, 8]
     .map((sample) => sweep(sample, 1 + sample * 0.05, perVersion))
     .join("\n");

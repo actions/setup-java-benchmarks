@@ -28,7 +28,12 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { analyzePairs, requireEnv } from "./paired.mjs";
-import { describeVerdict, formatInterval, holmAdjust } from "./stats.mjs";
+import {
+  classify,
+  describeVerdict,
+  formatInterval,
+  holmAdjust,
+} from "./stats.mjs";
 
 const RESULTS_DIR = ".benchmark-results";
 const OUTPUT_DIR = "action-overhead-results";
@@ -217,8 +222,19 @@ function seconds(value, digits = 3) {
     : `${value >= 0 ? "" : "−"}${Math.abs(value).toFixed(digits)}s`;
 }
 
+function analysisVerdict(analysis, adjustedP) {
+  if (!analysis) return null;
+  if (adjustedP === null || adjustedP === undefined) return analysis.verdict;
+  return classify(analysis.interval, {
+    noiseFloor: analysis.noiseFloorSeconds,
+    pValue: adjustedP,
+    pairCount: analysis.pairs.length,
+  });
+}
+
 function analysisRow(label, analysis, adjustedP) {
   if (!analysis) return `| ${label} | no usable pairs | | | |`;
+  const verdict = analysisVerdict(analysis, adjustedP);
   return [
     `| ${label}`,
     seconds(analysis.interval.estimate),
@@ -226,7 +242,7 @@ function analysisRow(label, analysis, adjustedP) {
     adjustedP === null || adjustedP === undefined
       ? analysis.pValue.toFixed(3)
       : adjustedP.toFixed(3),
-    analysis.verdict,
+    verdict,
   ]
     .join(" | ")
     .concat(" |");
