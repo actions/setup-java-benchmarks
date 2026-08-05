@@ -57,7 +57,7 @@ test('summarizes seed and warm measurements for an arm', () => {
         setupSeconds: 7,
         buildSeconds: 20,
         postSeconds: 8,
-        jobSeconds: 61
+        jobSeconds: 64
       },
       {
         arm: 'treatment',
@@ -87,6 +87,6 @@ test('summarizes seed and warm measurements for an arm', () => {
     warmJobSeconds: 35,
     coldSetupSeconds: 7,
     coldPostSeconds: 8,
-    estimatedBilledMinutes: 4
+    estimatedBilledMinutes: 2
   });
 });
