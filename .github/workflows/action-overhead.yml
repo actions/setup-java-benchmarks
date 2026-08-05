@@ -1,0 +1,311 @@
+name: Action overhead
+
+on:
+  workflow_dispatch:
+    inputs:
+      setup-java-repository:
+        description: Repository containing the setup-java action
+        required: true
+        default: actions/setup-java
+        type: string
+      baseline-ref:
+        description: Git ref containing the baseline implementation
+        required: true
+        default: main
+        type: string
+      candidate-ref:
+        description: Git ref containing the candidate implementation
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: action-overhead
+  cancel-in-progress: false
+
+env:
+  # Shared by the seed job and by every `maven-hit` slot, so that all of them
+  # compute the same cache key and restore the same stored entry. Scoping it to
+  # the run keeps concurrent runs from reusing each other's blob, whose placement
+  # in the cache service fixes its download throughput for its whole life.
+  SEEDED_IDENTITY: action-overhead-seed-${{ github.run_id }}
+
+# What does setup-java's own code cost?
+#
+# Every other scenario in this repository is dominated by how fast a blob moves
+# across the network, which setup-java does not control: it hands the transfer to
+# `@actions/cache`. This one deliberately uses a cache entry of about a megabyte
+# so the transfer term is small, leaving the action's own work — resolving a
+# distribution, computing a cache key, writing settings and toolchains, and the
+# bookkeeping around a restore — as what is actually being timed.
+#
+# The four cache profiles are levels of a decomposition rather than competing
+# options:
+#
+#   none        the action never touches the cache code at all
+#   maven-miss  it computes a key and asks the service, and is told no
+#   maven-hit   it computes a key, is told yes, and unpacks a small entry
+#   gradle-miss the same as maven-miss through the other package manager
+#
+# Reading the differences between those levels says where the time goes. The old
+# version of this workflow had no seed job, so its "warm path" was three
+# variations on a cache miss and it could not see the restore path at all.
+jobs:
+  seed:
+    name: Seed ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      # Seeding with the baseline is what makes both arms restore one shared
+      # entry. It relies on the two refs computing the same key for the same
+      # tree, which is exactly what the cache key stability workflow asserts; if
+      # that ever stops holding, the recorded cache-hit flags make it visible
+      # here rather than silently turning this into a miss-versus-hit comparison.
+      - name: Check out baseline setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: baseline
+          persist-credentials: false
+          ref: ${{ inputs.baseline-ref }}
+      - name: Build the fixture local repository
+        run: bash scripts/action-overhead.sh seed-fixture "$SEEDED_IDENTITY"
+      - name: Store it
+        id: store
+        uses: ./baseline
+        timeout-minutes: 10
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: benchmark/pom.xml
+          settings-path: benchmark-maven-home
+      # The key is a hash, so nothing about the entry's name identifies the run
+      # that created it. Recording what the action reports is the only way the
+      # report job can delete exactly the entries this run added instead of
+      # guessing at a prefix or leaving them to age out.
+      - name: Record the seeded cache key
+        run: |
+          mkdir -p .benchmark-results
+          printf '%s\n' "${{ steps.store.outputs.cache-primary-key }}" \
+            > ".benchmark-results/seeded-key-${{ matrix.os }}.txt"
+      - name: Upload the seeded cache key
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: action-overhead-seed-key-${{ matrix.os }}
+          path: .benchmark-results/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
+  benchmark:
+    name: ${{ matrix.os }} ${{ matrix.cache }} ${{ matrix.layout }}
+    needs: seed
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      # The cache service is the shared resource these jobs contend for, and
+      # contention shows up as a stalled restore rather than a slow one. Keeping
+      # the matrix narrow costs wall-clock time and buys measurements that are
+      # about setup-java instead of about the queue in front of it.
+      max-parallel: 6
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
+        cache: [none, maven-miss, maven-hit, gradle-miss]
+        # Two ends of the range rather than the full cross of versions and
+        # toolchains. The cross doubled the job count to separate two effects
+        # that were each smaller than the run-to-run spread.
+        layout: [simple, complex]
+        include:
+          - layout: simple
+            java-version: "21"
+            toolchains: empty
+          - layout: complex
+            java-version: |
+              17
+              21
+            toolchains: existing
+    env:
+      RESULTS: .benchmark-results/action-overhead-${{ matrix.os }}-${{ matrix.cache }}-${{ matrix.layout }}.csv
+      # A miss has to be a real miss. Scoping the identity to this job guarantees
+      # nothing has ever stored that key.
+      MISS_IDENTITY: action-overhead-miss-${{ github.run_id }}-${{ matrix.os }}-${{ matrix.cache }}-${{ matrix.layout }}
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check out baseline setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: baseline
+          persist-credentials: false
+          ref: ${{ inputs.baseline-ref }}
+      - name: Check out candidate setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: candidate
+          persist-credentials: false
+          ref: ${{ inputs.candidate-ref }}
+      - name: Record setup dist sizes
+        run: |
+          bash scripts/action-overhead.sh record-size baseline baseline
+          bash scripts/action-overhead.sh record-size candidate candidate
+
+      - name: Resolve the cache identity for this profile
+        run: |
+          if [ "${{ matrix.cache }}" = "maven-hit" ]; then
+            echo "IDENTITY=$SEEDED_IDENTITY" >> "$GITHUB_ENV"
+          else
+            echo "IDENTITY=$MISS_IDENTITY" >> "$GITHUB_ENV"
+          fi
+
+      # The first setup in a job pays DNS resolution, TLS handshakes and a cold
+      # page cache that the later ones do not. That is a one-off spike rather
+      # than drift, so the mirrored slot order cannot cancel it; this slot pays
+      # those costs and is discarded.
+      - name: Prepare warm-up slot
+        run: bash scripts/action-overhead.sh prepare "${{ matrix.cache }}" "${{ matrix.toolchains }}" "$IDENTITY"
+      - name: Warm-up setup (discarded)
+        uses: ./baseline
+        # A setup that has not finished in three minutes has stalled rather than
+        # being slow; failing costs this configuration, which the report drops.
+        timeout-minutes: 3
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java-version }}
+          cache: ${{ startsWith(matrix.cache, 'maven') && 'maven' || (startsWith(matrix.cache, 'gradle') && 'gradle' || '') }}
+          cache-dependency-path: benchmark/${{ startsWith(matrix.cache, 'gradle') && 'build.gradle' || 'pom.xml' }}
+          settings-path: benchmark-maven-home
+
+      - name: Prepare slot 1
+        run: bash scripts/action-overhead.sh prepare "${{ matrix.cache }}" "${{ matrix.toolchains }}" "$IDENTITY"
+      - name: Start slot 1 timer
+        run: bash scripts/action-overhead.sh start
+      - name: Slot 1 setup (baseline)
+        id: slot1
+        uses: ./baseline
+        timeout-minutes: 3
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java-version }}
+          cache: ${{ startsWith(matrix.cache, 'maven') && 'maven' || (startsWith(matrix.cache, 'gradle') && 'gradle' || '') }}
+          cache-dependency-path: benchmark/${{ startsWith(matrix.cache, 'gradle') && 'build.gradle' || 'pom.xml' }}
+          settings-path: benchmark-maven-home
+      - name: Record slot 1
+        run: bash scripts/action-overhead.sh record "$RESULTS" "${{ matrix.os }}" "${{ matrix.cache }}" "${{ matrix.layout }}" baseline 1 "${{ steps.slot1.outputs.cache-hit }}"
+
+      - name: Prepare slot 2
+        run: bash scripts/action-overhead.sh prepare "${{ matrix.cache }}" "${{ matrix.toolchains }}" "$IDENTITY"
+      - name: Start slot 2 timer
+        run: bash scripts/action-overhead.sh start
+      - name: Slot 2 setup (candidate)
+        id: slot2
+        uses: ./candidate
+        timeout-minutes: 3
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java-version }}
+          cache: ${{ startsWith(matrix.cache, 'maven') && 'maven' || (startsWith(matrix.cache, 'gradle') && 'gradle' || '') }}
+          cache-dependency-path: benchmark/${{ startsWith(matrix.cache, 'gradle') && 'build.gradle' || 'pom.xml' }}
+          settings-path: benchmark-maven-home
+      - name: Record slot 2
+        run: bash scripts/action-overhead.sh record "$RESULTS" "${{ matrix.os }}" "${{ matrix.cache }}" "${{ matrix.layout }}" candidate 2 "${{ steps.slot2.outputs.cache-hit }}"
+
+      - name: Prepare slot 3
+        run: bash scripts/action-overhead.sh prepare "${{ matrix.cache }}" "${{ matrix.toolchains }}" "$IDENTITY"
+      - name: Start slot 3 timer
+        run: bash scripts/action-overhead.sh start
+      - name: Slot 3 setup (candidate)
+        id: slot3
+        uses: ./candidate
+        timeout-minutes: 3
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java-version }}
+          cache: ${{ startsWith(matrix.cache, 'maven') && 'maven' || (startsWith(matrix.cache, 'gradle') && 'gradle' || '') }}
+          cache-dependency-path: benchmark/${{ startsWith(matrix.cache, 'gradle') && 'build.gradle' || 'pom.xml' }}
+          settings-path: benchmark-maven-home
+      - name: Record slot 3
+        run: bash scripts/action-overhead.sh record "$RESULTS" "${{ matrix.os }}" "${{ matrix.cache }}" "${{ matrix.layout }}" candidate 3 "${{ steps.slot3.outputs.cache-hit }}"
+
+      - name: Prepare slot 4
+        run: bash scripts/action-overhead.sh prepare "${{ matrix.cache }}" "${{ matrix.toolchains }}" "$IDENTITY"
+      - name: Start slot 4 timer
+        run: bash scripts/action-overhead.sh start
+      - name: Slot 4 setup (baseline)
+        id: slot4
+        uses: ./baseline
+        timeout-minutes: 3
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java-version }}
+          cache: ${{ startsWith(matrix.cache, 'maven') && 'maven' || (startsWith(matrix.cache, 'gradle') && 'gradle' || '') }}
+          cache-dependency-path: benchmark/${{ startsWith(matrix.cache, 'gradle') && 'build.gradle' || 'pom.xml' }}
+          settings-path: benchmark-maven-home
+      - name: Record slot 4
+        run: bash scripts/action-overhead.sh record "$RESULTS" "${{ matrix.os }}" "${{ matrix.cache }}" "${{ matrix.layout }}" baseline 4 "${{ steps.slot4.outputs.cache-hit }}"
+
+      - name: Upload raw benchmark data
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: action-overhead-${{ matrix.os }}-${{ matrix.cache }}-${{ matrix.layout }}
+          path: .benchmark-results/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
+  report:
+    name: Report
+    needs: benchmark
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Download timings and seeded keys
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: action-overhead-*
+          path: .benchmark-results
+      - name: Generate report
+        env:
+          SETUP_JAVA_REPOSITORY: ${{ inputs.setup-java-repository }}
+          BASELINE_REF: ${{ inputs.baseline-ref }}
+          CANDIDATE_REF: ${{ inputs.candidate-ref }}
+          RUN_ID: ${{ github.run_id }}
+        run: node scripts/report-action-overhead.mjs
+      - name: Delete the seeded cache entries
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/action-overhead.sh delete-seeded "$GITHUB_REPOSITORY"
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: action-overhead-results-${{ github.run_id }}
+          path: action-overhead-results/
+          retention-days: 30

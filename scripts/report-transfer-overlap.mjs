@@ -1,16 +1,35 @@
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  readdir,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { hashFilesSingle } from "./report.mjs";
 import {
   analyzePairs,
+  buildPairs,
+  noiseFloor,
   parseSamples,
-  readSampleFiles,
+  readSampleFiles as readPairedSampleFiles,
   requireEnv,
 } from "./paired.mjs";
-import { describeVerdict, formatInterval } from "./stats.mjs";
+import { classify, describeVerdict, formatInterval } from "./stats.mjs";
+
+export { buildPairs, noiseFloor, parseSamples };
+
+export function readSampleFiles(directory) {
+  return readPairedSampleFiles("transfer-overlap-timings", directory);
+}
+
+export function analyze(rows) {
+  return analyzePairs(rows, "baseline", "candidate");
+}
 
 const API_VERSION = "2022-11-28";
-const RESULTS_DIR = "jdk-cache-results";
 
 function csvValue(value) {
   return `"${String(value ?? "").replaceAll('"', '""')}"`;
@@ -49,23 +68,20 @@ async function allPages(path, field, token) {
 export function markdown(metadata, analysis, caches) {
   const { baseline, candidate, interval, control } = analysis;
   const lines = [
-    "# JDK cache benchmark",
+    "# Transfer overlap benchmark",
     "",
-    `${metadata.distribution} ${metadata.javaVersion}, ${analysis.pairs.length} runners x 2 paired observations, run ${metadata.runId}.`,
-    `\`cache-jdk: false\` vs \`cache-jdk: true\` using \`${metadata.setupJavaRef}\` from \`${metadata.setupJavaRepository}\`.`,
-    "",
-    "The runner tool cache is purged before every measured slot, so each setup",
-    "resolves the JDK the way a runner image without it would.",
+    `Temurin ${metadata.javaVersion}, ${analysis.pairs.length} runners x 2 paired observations, run ${metadata.runId}.`,
+    `Baseline \`${metadata.baselineRef}\` vs candidate \`${metadata.candidateRef}\` from \`${metadata.setupJavaRepository}\`.`,
     "",
     "## Verdict",
     "",
     `**${describeVerdict(analysis.verdict)}**`,
     "",
-    `Paired difference (\`cache-jdk: true\` - \`cache-jdk: false\`): **${formatInterval(interval)}**.`,
+    `Paired difference (candidate - baseline): **${formatInterval(interval, { digits: 3 })}**.`,
     `Permutation p-value: ${analysis.pValue.toFixed(3)}. Hodges-Lehmann shift: ${analysis.shiftSeconds.toFixed(3)}s.`,
     `Harness noise floor: ${analysis.noiseFloorSeconds.toFixed(3)}s (median within-runner repeat spread).`,
     "",
-    `A/A control (\`cache-jdk: false\` against itself) reports **${control.verdict}** at ${formatInterval(control.interval)}. A healthy harness reports \`within-noise\` or \`inconclusive\` here; an \`improvement\` or \`regression\` means slot ordering is biasing results and the verdict above cannot be trusted.`,
+    `A/A control (baseline against itself) reports **${control.verdict}** at ${formatInterval(control.interval, { digits: 3 })}. A healthy harness reports \`within-noise\` or \`inconclusive\` here; an \`improvement\` or \`regression\` means slot ordering is biasing results and the verdict above cannot be trusted.`,
     "",
     analysis.droppedRunners.length === 0
       ? "No runner was discarded for a stalled slot."
@@ -76,12 +92,9 @@ export function markdown(metadata, analysis, caches) {
     "| Arm | Runners | Mean (s) | Median (s) | SD (s) | MAD (s) | p95 (s) |",
     "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
   ];
-  for (const [label, arm] of [
-    ["cache-jdk: false", baseline],
-    ["cache-jdk: true", candidate],
-  ]) {
+  for (const summary of [baseline, candidate]) {
     lines.push(
-      `| \`${label}\` | ${arm.samples} | ${arm.meanSeconds.toFixed(3)} | ${arm.medianSeconds.toFixed(3)} | ${arm.standardDeviationSeconds.toFixed(3)} | ${arm.madSeconds.toFixed(3)} | ${arm.p95Seconds.toFixed(3)} |`,
+      `| ${summary.arm} | ${summary.samples} | ${summary.meanSeconds.toFixed(3)} | ${summary.medianSeconds.toFixed(3)} | ${summary.standardDeviationSeconds?.toFixed(3) ?? "n/a"} | ${summary.madSeconds.toFixed(3)} | ${summary.p95Seconds.toFixed(3)} |`,
     );
   }
   lines.push(
@@ -90,7 +103,7 @@ export function markdown(metadata, analysis, caches) {
     "",
     "## Paired samples",
     "",
-    "| Runner | no-cache slot 1 (s) | cache slot 2 (s) | cache slot 3 (s) | no-cache slot 4 (s) | Paired delta (s) |",
+    "| Runner | baseline slot 1 (s) | candidate slot 2 (s) | candidate slot 3 (s) | baseline slot 4 (s) | Paired delta (s) |",
     "| ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const pair of analysis.pairs) {
@@ -100,9 +113,9 @@ export function markdown(metadata, analysis, caches) {
   }
   lines.push(
     "",
-    "## Caches",
+    "## Cache fixtures",
     "",
-    "Both arms restore the same Maven entry, so the stored blob cannot bias the comparison. Only the JDK entry differs between them.",
+    "Both arms restore the same entries, so the stored blob cannot bias the comparison.",
     "",
     "| Cache | Size (MiB) |",
     "| --- | ---: |",
@@ -120,22 +133,26 @@ export async function main(env = process.env) {
     "GITHUB_REPOSITORY",
     "GH_TOKEN",
     "GITHUB_RUN_ID",
-    "DISTRIBUTION",
-    "JAVA_VERSION",
+    "BASELINE_REF",
+    "CANDIDATE_REF",
     "SETUP_JAVA_REPOSITORY",
-    "SETUP_JAVA_REF",
+    "JAVA_VERSION",
   ]);
+
   const [owner, repo] = env.GITHUB_REPOSITORY.split("/");
   const token = env.GH_TOKEN;
   const runId = env.GITHUB_RUN_ID;
+  const baselineRef = env.BASELINE_REF;
+  const candidateRef = env.CANDIDATE_REF;
+  const setupJavaRepository = env.SETUP_JAVA_REPOSITORY;
   if (!owner || !repo) {
     throw new Error(
       `GITHUB_REPOSITORY must be owner/repo, got "${env.GITHUB_REPOSITORY}"`,
     );
   }
 
-  const rows = parseSamples(await readSampleFiles("jdk-cache-timings"));
-  const analysis = analyzePairs(rows, "baseline", "candidate");
+  const rows = parseSamples(await readSampleFiles());
+  const analysis = analyze(rows);
   if (analysis.pairs.length === 0) {
     throw new Error("No complete ABBA samples were collected");
   }
@@ -145,44 +162,68 @@ export async function main(env = process.env) {
     "actions_caches",
     token,
   );
-  const caches = cacheEntries
-    .filter(
-      (entry) =>
-        entry.key.startsWith("setup-java-jdk-") ||
-        entry.key.startsWith("setup-java-Linux-x64-maven"),
-    )
-    .map((entry) => ({
-      type: entry.key.startsWith("setup-java-jdk-") ? "jdk" : "maven",
+
+  // Both arms restore this single entry, so the stored blob cannot bias the
+  // comparison. The wrapper entry is optional: a baseline that predates wrapper
+  // caching simply never restores it.
+  const benchmarkId = `transfer-overlap-${runId}`;
+  const expected = [
+    {
+      type: "maven-dependencies",
+      key: `setup-java-Linux-x64-maven-${hashFilesSingle(`${benchmarkId}\n`)}`,
+      required: true,
+    },
+    {
+      type: "maven-wrapper",
+      key: `setup-java-Linux-x64-maven-wrapper-${hashFilesSingle(
+        `wrapperVersion=overlap\n# benchmark-id=${benchmarkId}\n`,
+      )}`,
+      required: false,
+    },
+  ];
+
+  const caches = [];
+  for (const item of expected) {
+    const entry = cacheEntries.find((cache) => cache.key === item.key);
+    if (!entry) {
+      if (item.required) {
+        throw new Error(`Expected cache not found: ${item.key}`);
+      }
+      continue;
+    }
+    caches.push({
+      type: item.type,
       id: entry.id,
-      key: entry.key,
+      key: item.key,
       sizeBytes: entry.size_in_bytes,
-    }));
+    });
+  }
 
   const metadata = {
     repository: env.GITHUB_REPOSITORY,
     runId,
-    distribution: env.DISTRIBUTION,
     javaVersion: env.JAVA_VERSION,
-    setupJavaRepository: env.SETUP_JAVA_REPOSITORY,
-    setupJavaRef: env.SETUP_JAVA_REF,
+    setupJavaRepository,
+    baselineRef,
+    candidateRef,
     generatedAt: new Date().toISOString(),
   };
-
   const report = markdown(metadata, analysis, caches);
-  await mkdir(RESULTS_DIR, { recursive: true });
+
+  await mkdir("transfer-overlap-results", { recursive: true });
   await writeFile(
-    `${RESULTS_DIR}/results.json`,
+    "transfer-overlap-results/results.json",
     `${JSON.stringify({ metadata, analysis, caches }, null, 2)}\n`,
   );
   await writeFile(
-    `${RESULTS_DIR}/results.csv`,
+    "transfer-overlap-results/results.csv",
     `sample,arm,slot,seconds\n${rows
       .map((row) =>
         [row.sample, row.arm, row.slot, row.seconds].map(csvValue).join(","),
       )
       .join("\n")}\n`,
   );
-  await writeFile(`${RESULTS_DIR}/summary.md`, report);
+  await writeFile("transfer-overlap-results/summary.md", report);
   await appendFile(env.GITHUB_STEP_SUMMARY, report);
 
   if (env.CLEANUP_CACHES === "true") {
@@ -191,7 +232,7 @@ export async function main(env = process.env) {
         method: "DELETE",
       });
     }
-    console.log(`Deleted ${caches.length} JDK cache benchmark caches`);
+    console.log(`Deleted ${caches.length} transfer-overlap benchmark caches`);
   }
 }
 

@@ -1,4 +1,4 @@
-name: JDK cache
+name: Transfer overlap
 
 on:
   workflow_dispatch:
@@ -13,26 +13,18 @@ on:
           - "10"
           - "20"
         default: "10"
-      distribution:
-        description: JDK distribution
-        required: true
-        type: choice
-        options:
-          - microsoft
-          - temurin
-        default: microsoft
-      java-version:
-        description: Java feature version
-        required: true
-        type: string
-        default: "17"
       setup-java-repository:
         description: Repository containing the setup-java action
         required: true
         default: actions/setup-java
         type: string
-      setup-java-ref:
-        description: Git ref of setup-java to measure
+      baseline-ref:
+        description: Git ref for the baseline arm
+        required: true
+        default: v4.8.0
+        type: string
+      candidate-ref:
+        description: Git ref for the candidate arm
         required: true
         default: main
         type: string
@@ -46,6 +38,22 @@ permissions:
   actions: write
   contents: read
 
+# Does setup-java overlap the transfers it has to make?
+#
+# When a build configures more than one cache — a Maven local repository and a
+# wrapper distribution, say — setup-java restores both. Whether it does so one
+# after the other or at the same time is entirely its own choice, unlike the
+# throughput of either transfer, which belongs to `@actions/cache` and to the
+# network. That makes overlap one of the few properties of caching that a change
+# to this action can actually move, and PR actions/setup-java#1174 moved it, by
+# awaiting the two restores together instead of in sequence.
+#
+# The fixtures are deliberately large. An effect that exists only while a
+# transfer is in flight is proportional to how long the transfer takes, so a
+# small entry would shrink the very thing being measured below the noise. This
+# is the mirror image of the action overhead scenario, which uses a tiny entry
+# for exactly the opposite reason.
+
 env:
   # A cache segment download that fails leaves @actions/cache holding an armed
   # timer it never clears, so the action idles for the rest of this timeout after
@@ -54,10 +62,12 @@ env:
   # restores move 154 MiB in about 3 seconds, so 2 minutes is still far beyond
   # any legitimate download and bounds a stall to a fifth of what it was.
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 2
-  PETCLINIC_REF: f182358d02e4a68e52bdbabf55ca7800288511e7
+  JAVA_VERSION: 17.0.19+10
+  DEPENDENCY_FIXTURE_MIB: "160"
+  WRAPPER_FIXTURE_MIB: "9"
 
 concurrency:
-  group: jdk-cache-benchmark
+  group: transfer-overlap
   cancel-in-progress: false
 
 defaults:
@@ -65,81 +75,61 @@ defaults:
     shell: bash
 
 jobs:
-  prepare:
-    name: Prepare JDK cache benchmark
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Delete existing JDK caches
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          cache_ids="$(
-            gh cache list --repo "${{ github.repository }}" --limit 10000 \
-              --json id,key \
-              --jq '.[] | select(.key | startswith("setup-java-jdk-")) | .id'
-          )"
-          if [[ -z "$cache_ids" ]]; then
-            echo "No existing JDK caches found"
-            exit 0
-          fi
-          while IFS= read -r cache_id; do
-            gh cache delete "$cache_id" --repo "${{ github.repository }}"
-          done <<< "$cache_ids"
-
-  # Both arms share one Maven cache entry. A cache entry's download throughput
-  # depends on where the service placed the stored blob, so seeding one entry per
-  # arm would confound the arm with its blob. That bias is the same on every
-  # runner, which means pairing cannot remove it and more samples only tighten
-  # the interval around the wrong answer. Only the JDK cache differs between the
-  # arms, which is the effect under test.
+  # A single cache entry is seeded and both arms restore it. Giving each arm its
+  # own entry confounds the arm with the stored blob: a cache entry's download
+  # throughput depends on where the service placed it, and that bias is the same
+  # on every runner, so pairing cannot remove it and more samples only tighten
+  # the interval around the wrong answer. An A/A run of this workflow with one
+  # entry per arm reported a 0.859s improvement on identical code, with the
+  # baseline blob served at ~60 MB/s and the candidate blob at ~105-130 MB/s on
+  # the same runner.
   seed:
-    name: Seed caches
-    needs: prepare
+    name: Seed cache
     runs-on: ubuntu-24.04
     steps:
       - name: Check out benchmark repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      # PetClinic goes below the benchmark repository rather than over it: its
-      # build runs a nohttp check across the whole basedir and would otherwise
-      # lint the benchmark scripts.
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          path: petclinic
-          persist-credentials: false
-      - name: Check out setup-java
+      # Both refs are checked out in every job, including the arm this job does
+      # not use. The wrapper cache key hashes **/.mvn/wrapper/maven-wrapper.properties,
+      # which cache-dependency-path does not override, and setup-java carries such
+      # a file under __tests__. A job that checked out one ref would therefore
+      # derive a different wrapper key than one that checked out two, and the
+      # seeded wrapper cache would never be found.
+      - name: Check out baseline setup-java
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: ${{ inputs.setup-java-repository }}
-          path: .setup-java
+          path: baseline
           persist-credentials: false
-          ref: ${{ inputs.setup-java-ref }}
-      - name: Prepare cache identity
-        run: bash scripts/jdk-cache.sh prepare "jdk-cache-${{ github.run_id }}"
-      # The seed must download the JDK from the vendor so that setup-java
-      # registers its post-job save of the JDK cache.
-      - name: Purge matching runner tool cache
-        run: bash scripts/jdk-cache.sh purge-toolcache
-      - name: Setup Java
-        uses: ./.setup-java
+          ref: ${{ inputs.baseline-ref }}
+      - name: Check out candidate setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          repository: ${{ inputs.setup-java-repository }}
+          path: candidate
+          persist-credentials: false
+          ref: ${{ inputs.candidate-ref }}
+      - name: Prepare cache identity
+        run: bash scripts/transfer-overlap.sh prepare "transfer-overlap-${{ github.run_id }}"
+      # Seeded with the candidate so that the wrapper cache, which only newer
+      # revisions maintain, is populated too. The baseline simply does not
+      # restore it.
+      - name: Setup Java candidate
+        uses: ./candidate
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-jdk: true
-          cache-dependency-path: .jdk-cache-key
-      - name: Build PetClinic
-        working-directory: petclinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
+          cache-dependency-path: .transfer-overlap-cache-key
+      - name: Create synthetic cache fixtures
+        run: bash scripts/transfer-overlap.sh seed-fixtures
 
-  # Both arms run in the same job in ABBA order, so each runner yields one paired
-  # difference with its own speed cancelled out and the mirrored order cancels
-  # drift across the four slots.
+  # Both arms are measured inside the same job, in ABBA order. Sharing a runner
+  # removes the between-runner variance that otherwise swamps the effect, and
+  # the mirrored order cancels drift across the four slots. Measuring each arm
+  # twice per runner also yields a free A/A noise-floor estimate.
   measure:
     name: paired / ${{ matrix.sample }}
     needs: seed
@@ -152,10 +142,12 @@ jobs:
     timeout-minutes: 25
     strategy:
       fail-fast: false
-      # Every runner pulls the same seeded blobs, so running the whole matrix at
-      # once measures contention on the cache service that no real workflow would
-      # see. Waves are kept small so each measurement reflects an ordinary
-      # restore.
+      # Every runner pulls the same seeded blob, so running the whole matrix at
+      # once puts all of them on the cache service simultaneously and measures
+      # contention that no real workflow would see. At 20 concurrent runners the
+      # mean restore rose from about 3s to about 8s and the noise floor from
+      # 0.34s to 1.89s, which is enough to hide the effect under test. Waves are
+      # kept small so each measurement reflects an ordinary restore.
       max-parallel: 4
       matrix:
         sample: ${{ fromJSON(inputs.samples == '20' && '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]' || inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
@@ -164,27 +156,21 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      # PetClinic goes below the benchmark repository rather than over it: its
-      # build runs a nohttp check across the whole basedir and would otherwise
-      # lint the benchmark scripts.
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          path: petclinic
-          persist-credentials: false
-      - name: Check out setup-java
+      - name: Check out baseline setup-java
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: ${{ inputs.setup-java-repository }}
-          path: .setup-java
+          path: baseline
           persist-credentials: false
-          ref: ${{ inputs.setup-java-ref }}
+          ref: ${{ inputs.baseline-ref }}
+      - name: Check out candidate setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: candidate
+          persist-credentials: false
+          ref: ${{ inputs.candidate-ref }}
 
-      # Each slot deletes the extracted JDK and the local repository first, so
-      # every measured setup starts from the same empty state instead of
-      # extracting over files an earlier slot left behind.
       # The first setup in a job pays costs the later ones do not: DNS resolution,
       # TLS handshakes to the cache service and the JDK host, and a cold page
       # cache. That is a one-off spike rather than drift, so the mirrored slot
@@ -192,7 +178,7 @@ jobs:
       # difference between an arm's own first and last slot. This slot pays those
       # costs and is discarded.
       - name: Reset warm-up slot
-        run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
+        run: bash scripts/transfer-overlap.sh reset "transfer-overlap-${{ github.run_id }}"
       - name: Warm-up setup (discarded)
         # A restore that has not finished in three minutes has stalled on the
         # cache service rather than being slow: its neighbours in the same job
@@ -200,107 +186,105 @@ jobs:
         # discards along with the other incomplete ones, instead of letting the
         # job sit until its own timeout.
         timeout-minutes: 3
-        uses: ./.setup-java
+        uses: ./baseline
         with:
-          distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-jdk: false
-          cache-read-only: true
-          cache-dependency-path: .jdk-cache-key
+          cache-dependency-path: .transfer-overlap-cache-key
 
       - name: Reset slot 1
-        run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
+        run: bash scripts/transfer-overlap.sh reset "transfer-overlap-${{ github.run_id }}"
       - name: Start slot 1 timer
         run: node scripts/measure.mjs start
-      - name: Slot 1 setup (baseline, no JDK cache)
+      - name: Slot 1 setup (baseline)
         # A restore that has not finished in three minutes has stalled on the
         # cache service rather than being slow: its neighbours in the same job
         # take a few seconds. Failing here costs one runner, which the report
         # discards along with the other incomplete ones, instead of letting the
         # job sit until its own timeout.
         timeout-minutes: 3
-        uses: ./.setup-java
+        uses: ./baseline
         with:
-          distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-jdk: false
-          cache-read-only: true
-          cache-dependency-path: .jdk-cache-key
+          cache-dependency-path: .transfer-overlap-cache-key
       - name: Record slot 1
-        run: node scripts/measure.mjs record ".benchmark-results/jdk-cache-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 1
+        run: node scripts/measure.mjs record ".benchmark-results/transfer-overlap-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 1
+      - name: Verify slot 1 fixtures
+        run: bash scripts/transfer-overlap.sh verify baseline
 
       - name: Reset slot 2
-        run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
+        run: bash scripts/transfer-overlap.sh reset "transfer-overlap-${{ github.run_id }}"
       - name: Start slot 2 timer
         run: node scripts/measure.mjs start
-      - name: Slot 2 setup (candidate, JDK cache)
+      - name: Slot 2 setup (candidate)
         # A restore that has not finished in three minutes has stalled on the
         # cache service rather than being slow: its neighbours in the same job
         # take a few seconds. Failing here costs one runner, which the report
         # discards along with the other incomplete ones, instead of letting the
         # job sit until its own timeout.
         timeout-minutes: 3
-        uses: ./.setup-java
+        uses: ./candidate
         with:
-          distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-jdk: true
-          cache-read-only: true
-          cache-dependency-path: .jdk-cache-key
+          cache-dependency-path: .transfer-overlap-cache-key
       - name: Record slot 2
-        run: node scripts/measure.mjs record ".benchmark-results/jdk-cache-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 2
+        run: node scripts/measure.mjs record ".benchmark-results/transfer-overlap-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 2
+      - name: Verify slot 2 fixtures
+        run: bash scripts/transfer-overlap.sh verify candidate
 
       - name: Reset slot 3
-        run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
+        run: bash scripts/transfer-overlap.sh reset "transfer-overlap-${{ github.run_id }}"
       - name: Start slot 3 timer
         run: node scripts/measure.mjs start
-      - name: Slot 3 setup (candidate, JDK cache)
+      - name: Slot 3 setup (candidate)
         # A restore that has not finished in three minutes has stalled on the
         # cache service rather than being slow: its neighbours in the same job
         # take a few seconds. Failing here costs one runner, which the report
         # discards along with the other incomplete ones, instead of letting the
         # job sit until its own timeout.
         timeout-minutes: 3
-        uses: ./.setup-java
+        uses: ./candidate
         with:
-          distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-jdk: true
-          cache-read-only: true
-          cache-dependency-path: .jdk-cache-key
+          cache-dependency-path: .transfer-overlap-cache-key
       - name: Record slot 3
-        run: node scripts/measure.mjs record ".benchmark-results/jdk-cache-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 3
+        run: node scripts/measure.mjs record ".benchmark-results/transfer-overlap-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 3
+      - name: Verify slot 3 fixtures
+        run: bash scripts/transfer-overlap.sh verify candidate
 
       - name: Reset slot 4
-        run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
+        run: bash scripts/transfer-overlap.sh reset "transfer-overlap-${{ github.run_id }}"
       - name: Start slot 4 timer
         run: node scripts/measure.mjs start
-      - name: Slot 4 setup (baseline, no JDK cache)
+      - name: Slot 4 setup (baseline)
         # A restore that has not finished in three minutes has stalled on the
         # cache service rather than being slow: its neighbours in the same job
         # take a few seconds. Failing here costs one runner, which the report
         # discards along with the other incomplete ones, instead of letting the
         # job sit until its own timeout.
         timeout-minutes: 3
-        uses: ./.setup-java
+        uses: ./baseline
         with:
-          distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-jdk: false
-          cache-read-only: true
-          cache-dependency-path: .jdk-cache-key
+          cache-dependency-path: .transfer-overlap-cache-key
       - name: Record slot 4
-        run: node scripts/measure.mjs record ".benchmark-results/jdk-cache-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 4
+        run: node scripts/measure.mjs record ".benchmark-results/transfer-overlap-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 4
+      - name: Verify slot 4 fixtures
+        run: bash scripts/transfer-overlap.sh verify baseline
 
       - name: Upload sample timings
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: jdk-cache-timings-${{ matrix.sample }}
+          name: transfer-overlap-timings-${{ matrix.sample }}
           path: .benchmark-results/
           include-hidden-files: true
           if-no-files-found: error
@@ -319,22 +303,21 @@ jobs:
       - name: Download sample timings
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
-          pattern: jdk-cache-timings-*
+          pattern: transfer-overlap-timings-*
           merge-multiple: true
           path: .benchmark-results
-      - name: Generate JDK cache report
+      - name: Generate transfer overlap report
         env:
           GH_TOKEN: ${{ github.token }}
           SAMPLES: ${{ inputs.samples }}
-          DISTRIBUTION: ${{ inputs.distribution }}
-          JAVA_VERSION: ${{ inputs.java-version }}
+          BASELINE_REF: ${{ inputs.baseline-ref }}
+          CANDIDATE_REF: ${{ inputs.candidate-ref }}
           SETUP_JAVA_REPOSITORY: ${{ inputs.setup-java-repository }}
-          SETUP_JAVA_REF: ${{ inputs.setup-java-ref }}
           CLEANUP_CACHES: ${{ inputs.cleanup-caches }}
-        run: node scripts/report-jdk-cache.mjs
+        run: node scripts/report-transfer-overlap.mjs
       - name: Upload benchmark results
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: jdk-cache-${{ github.run_id }}
-          path: jdk-cache-results/
+          name: transfer-overlap-${{ github.run_id }}
+          path: transfer-overlap-results/
           retention-days: 30
