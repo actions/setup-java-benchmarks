@@ -18,9 +18,10 @@ on:
         required: true
         type: choice
         options:
+          - zulu
           - microsoft
           - temurin
-        default: microsoft
+        default: zulu
       java-version:
         description: Java feature version
         required: true
@@ -51,7 +52,7 @@ env:
   # timer it never clears, so the action idles for the rest of this timeout after
   # its work is done (see actions/toolkit's promiseWithTimeout: the clearTimeout
   # runs in a .then, which a rejection skips). The default is 10 minutes. These
-  # restores move 154 MiB in about 3 seconds, so 2 minutes is still far beyond
+  # restores move hundreds of MiB in seconds, so 2 minutes is still far beyond
   # any legitimate download and bounds a stall to a fifth of what it was.
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 2
   PETCLINIC_REF: f182358d02e4a68e52bdbabf55ca7800288511e7
