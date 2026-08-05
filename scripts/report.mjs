@@ -6,6 +6,7 @@ import {
   analyzeAgainstReference,
   parseSamples,
   readSampleFiles,
+  requireEnv,
 } from "./paired.mjs";
 import { describeVerdict, formatInterval } from "./stats.mjs";
 
@@ -157,11 +158,20 @@ export function markdown(metadata, analysis, caches) {
 }
 
 export async function main(env = process.env) {
+  requireEnv(env, [
+    "GITHUB_REPOSITORY",
+    "GH_TOKEN",
+    "GITHUB_RUN_ID",
+    "DISTRIBUTION",
+    "JAVA_VERSION",
+  ]);
   const [owner, repo] = env.GITHUB_REPOSITORY.split("/");
   const token = env.GH_TOKEN;
   const runId = env.GITHUB_RUN_ID;
-  if (!owner || !repo || !token || !runId) {
-    throw new Error("Missing required GitHub Actions environment variables");
+  if (!owner || !repo) {
+    throw new Error(
+      `GITHUB_REPOSITORY must be owner/repo, got "${env.GITHUB_REPOSITORY}"`,
+    );
   }
 
   const rows = parseSamples(await readSampleFiles("version-sweep"));

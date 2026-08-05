@@ -6,6 +6,7 @@ import {
   classify,
   createRandom,
   differenceInterval,
+  formatInterval,
   hodgesLehmann,
   mean,
   median,
@@ -125,4 +126,27 @@ test("unpaired sampling produces a false positive on identical code", () => {
   // The only defence left for unpaired data is a noise floor calibrated from
   // observed run-to-run drift, which suppresses the spurious verdict.
   assert.equal(classify(interval, { noiseFloor: 1.5 }), "within-noise");
+});
+
+test("formatInterval labels the interval's own confidence level", () => {
+  assert.equal(
+    formatInterval(
+      { estimate: -1.25, low: -2, high: -0.5, confidence: 0.95 },
+      { digits: 2 },
+    ),
+    "-1.25s (95% CI -2.00 to -0.50)",
+  );
+  // A caller that widens the interval must not have it published as 95%.
+  assert.equal(
+    formatInterval(
+      { estimate: -1.25, low: -3, high: 0.5, confidence: 0.99 },
+      { digits: 2 },
+    ),
+    "-1.25s (99% CI -3.00 to 0.50)",
+  );
+  // Intervals built before `confidence` was carried still read as 95%.
+  assert.equal(
+    formatInterval({ estimate: 0, low: -1, high: 1 }),
+    "0.0s (95% CI -1.0 to 1.0)",
+  );
 });

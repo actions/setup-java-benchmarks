@@ -21,7 +21,7 @@ import {
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { analyzePairs } from "./paired.mjs";
+import { analyzePairs, requireEnv } from "./paired.mjs";
 import { describeVerdict, formatInterval } from "./stats.mjs";
 
 const RESULTS_DIR = ".benchmark-results";
@@ -143,6 +143,12 @@ export function markdown(metadata, overall, byOs, byCache, configurations) {
 }
 
 export async function main(env = process.env) {
+  requireEnv(env, [
+    "GITHUB_RUN_ID",
+    "SETUP_JAVA_REPOSITORY",
+    "BASELINE_REF",
+    "CANDIDATE_REF",
+  ]);
   const rows = parseConfigurationSamples(await readResults());
   const { configurations, rows: paired } = toPairedRows(rows);
   const overall = analyzePairs(paired, "baseline", "candidate");

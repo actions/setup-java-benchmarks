@@ -321,3 +321,15 @@ export function analyzeAgainstReference(rows, arms, reference) {
     },
   };
 }
+
+// Every name passed here ends up in the published report, so a missing value has
+// to fail with the name of what is missing. Rendering `undefined` into a results
+// table is worse than not rendering one at all.
+export function requireEnv(env, names) {
+  const missing = names.filter((name) => !env[name]);
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required environment variables: ${missing.join(", ")}`,
+    );
+  }
+}

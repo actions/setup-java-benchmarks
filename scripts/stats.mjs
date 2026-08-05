@@ -205,10 +205,14 @@ export function classify(interval, options = {}) {
   return improved ? "improvement" : "regression";
 }
 
+// The label follows the interval's own confidence level rather than assuming
+// 95%, so a caller that widens or narrows the interval cannot end up publishing
+// a number under the wrong label.
 export function formatInterval(interval, { digits = 1, unit = "s" } = {}) {
   if (!interval) return "n/a";
-  const { estimate, low, high } = interval;
-  return `${estimate.toFixed(digits)}${unit} (95% CI ${low.toFixed(digits)} to ${high.toFixed(digits)})`;
+  const { estimate, low, high, confidence = DEFAULT_CONFIDENCE } = interval;
+  const level = Number((confidence * 100).toFixed(2));
+  return `${estimate.toFixed(digits)}${unit} (${level}% CI ${low.toFixed(digits)} to ${high.toFixed(digits)})`;
 }
 
 export function describeVerdict(verdict) {

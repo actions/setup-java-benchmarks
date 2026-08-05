@@ -1,7 +1,12 @@
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-import { analyzePairs, parseSamples, readSampleFiles } from "./paired.mjs";
+import {
+  analyzePairs,
+  parseSamples,
+  readSampleFiles,
+  requireEnv,
+} from "./paired.mjs";
 import { describeVerdict, formatInterval } from "./stats.mjs";
 
 const API_VERSION = "2022-11-28";
@@ -111,11 +116,22 @@ export function markdown(metadata, analysis, caches) {
 }
 
 export async function main(env = process.env) {
+  requireEnv(env, [
+    "GITHUB_REPOSITORY",
+    "GH_TOKEN",
+    "GITHUB_RUN_ID",
+    "DISTRIBUTION",
+    "JAVA_VERSION",
+    "SETUP_JAVA_REPOSITORY",
+    "SETUP_JAVA_REF",
+  ]);
   const [owner, repo] = env.GITHUB_REPOSITORY.split("/");
   const token = env.GH_TOKEN;
   const runId = env.GITHUB_RUN_ID;
-  if (!owner || !repo || !token || !runId) {
-    throw new Error("Missing required GitHub Actions environment variables");
+  if (!owner || !repo) {
+    throw new Error(
+      `GITHUB_REPOSITORY must be owner/repo, got "${env.GITHUB_REPOSITORY}"`,
+    );
   }
 
   const rows = parseSamples(await readSampleFiles("jdk-cache-timings"));
