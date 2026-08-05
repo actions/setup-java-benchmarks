@@ -11,7 +11,11 @@ on:
           - "2"
           - "6"
           - "10"
-        default: "6"
+          - "14"
+        # The sign-flip test needs at least five usable pairs to reach 0.05 at
+        # all, and this workflow discards stalled runners, so a nominal six can
+        # land on four and report nothing about a 4.5x effect. Ten leaves room.
+        default: "10"
       setup-java-repository:
         description: Repository containing the setup-java action
         required: true

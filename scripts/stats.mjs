@@ -7,6 +7,7 @@
 
 const BOOTSTRAP_ITERATIONS = 10000;
 const DEFAULT_CONFIDENCE = 0.95;
+const SIGNIFICANCE_LEVEL = 0.05;
 
 // Deterministic PRNG so a given set of samples always produces the same
 // interval. Reports are compared across runs and must not wobble because the
@@ -168,6 +169,20 @@ export function pairedPermutationTest(differences, options = {}) {
   return (atLeastAsExtreme + 1) / (iterations + 1);
 }
 
+// The sign-flip test has only 2^n distinct assignments for n paired
+// observations, so its smallest attainable p-value is 2^-n no matter how large
+// the effect is. At four pairs that floor is 0.0625, above the 0.05 the verdict
+// requires — so a run with four usable runners cannot report a finding even for
+// an effect it measured perfectly. That is a property of the design, not of the
+// data, and it has to be said rather than dressed up as "collect more samples".
+export function significanceReachable(pairCount, alpha = SIGNIFICANCE_LEVEL) {
+  return pairCount > 0 && Math.pow(2, -pairCount) <= alpha;
+}
+
+export function pairsNeededForSignificance(alpha = SIGNIFICANCE_LEVEL) {
+  return Math.ceil(Math.log2(1 / alpha));
+}
+
 // Holm's step-down correction controls the family-wise error rate when one
 // report makes several comparisons against the same reference.
 export function holmAdjust(pValues) {
@@ -210,10 +225,17 @@ export function classify(interval, options = {}) {
     noiseFloor = 0,
     lowerIsBetter = true,
     pValue = null,
-    alpha = 0.05,
+    alpha = SIGNIFICANCE_LEVEL,
+    pairCount = null,
   } = options;
   if (!interval) return "unknown";
   const { low, high, estimate } = interval;
+  // Reported before anything else, because when the design cannot reach alpha
+  // the p-value carries no information and "collect more samples" is the only
+  // honest reading of any verdict built on it.
+  if (pairCount !== null && !significanceReachable(pairCount, alpha)) {
+    return "underpowered";
+  }
   if (low <= 0 && high >= 0) return "inconclusive";
   if (pValue !== null && pValue >= alpha) return "inconclusive";
   if (Math.abs(estimate) < noiseFloor) return "within-noise";
@@ -224,7 +246,7 @@ export function classify(interval, options = {}) {
 // The label follows the interval's own confidence level rather than assuming
 // 95%, so a caller that widens or narrows the interval cannot end up publishing
 // a number under the wrong label.
-export function formatInterval(interval, { digits = 1, unit = "s" } = {}) {
+export function formatInterval(interval, { digits = 3, unit = "s" } = {}) {
   if (!interval) return "n/a";
   const { estimate, low, high, confidence = DEFAULT_CONFIDENCE } = interval;
   const level = Number((confidence * 100).toFixed(2));
@@ -241,6 +263,8 @@ export function describeVerdict(verdict) {
       return "No usable signal — the effect is smaller than the harness noise floor.";
     case "inconclusive":
       return "Inconclusive — the interval includes zero or the permutation test does not agree; collect more samples.";
+    case "underpowered":
+      return `Underpowered — too few paired runners for the permutation test to reach significance at all; it needs at least ${pairsNeededForSignificance()}. Any effect shown below may be real, but this run cannot establish it.`;
     default:
       return "Unknown.";
   }
