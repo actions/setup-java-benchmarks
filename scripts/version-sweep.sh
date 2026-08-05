@@ -11,11 +11,15 @@ set -euo pipefail
 command=${1:?command is required}
 benchmark_id=${2:?benchmark id is required}
 
-wrapper_properties=.mvn/wrapper/maven-wrapper.properties
+# Spring PetClinic is checked out below the benchmark repository rather than over
+# it, because its build runs a nohttp check across the whole basedir and would
+# otherwise lint these scripts.
+project_dir=${PROJECT_DIR:-petclinic}
+wrapper_properties="$project_dir/.mvn/wrapper/maven-wrapper.properties"
 
 append_once() {
   local file=$1 line=$2
-  if [ ! -f "$file" ] || ! grep -qF "$line" "$file"; then
+  if [ ! -f "$file" ] || ! grep -qF -- "$line" "$file"; then
     printf '%s\n' "$line" >> "$file"
   fi
 }
@@ -29,7 +33,7 @@ write_identity() {
   append_once "$wrapper_properties" "# benchmark-id=$benchmark_id"
   # v3 predates cache-dependency-path and hashes pom.xml. A comment in the
   # epilog is well-formed XML and leaves the build unaffected.
-  append_once pom.xml "<!-- benchmark-id=$benchmark_id -->"
+  append_once "$project_dir/pom.xml" "<!-- benchmark-id=$benchmark_id -->"
 }
 
 case "$command" in

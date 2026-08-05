@@ -91,11 +91,19 @@ jobs:
     needs: prepare
     runs-on: ubuntu-24.04
     steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      # PetClinic goes below the benchmark repository rather than over it: its
+      # build runs a nohttp check across the whole basedir and would otherwise
+      # lint the benchmark scripts.
       - name: Check out Spring PetClinic
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: spring-projects/spring-petclinic
           ref: ${{ env.PETCLINIC_REF }}
+          path: petclinic
           persist-credentials: false
       - name: Check out setup-java
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -119,6 +127,7 @@ jobs:
           cache-jdk: true
           cache-dependency-path: .jdk-cache-key
       - name: Build PetClinic
+        working-directory: petclinic
         run: ./mvnw --batch-mode --no-transfer-progress compile
 
   # Both arms run in the same job in ABBA order, so each runner yields one paired
@@ -138,11 +147,19 @@ jobs:
       matrix:
         sample: ${{ fromJSON(inputs.samples == '20' && '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]' || inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
     steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      # PetClinic goes below the benchmark repository rather than over it: its
+      # build runs a nohttp check across the whole basedir and would otherwise
+      # lint the benchmark scripts.
       - name: Check out Spring PetClinic
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: spring-projects/spring-petclinic
           ref: ${{ env.PETCLINIC_REF }}
+          path: petclinic
           persist-credentials: false
       - name: Check out setup-java
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
