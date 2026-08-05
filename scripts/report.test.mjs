@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { analyzeAgainstReference, parseSamples } from "./paired.mjs";
 import {
-  COHORTS,
+  COMPARABLE_ARMS,
   VERSIONS,
   hashFilesSingle,
   markdown,
@@ -92,62 +92,70 @@ test("reports the reference against itself without a verdict", () => {
   assert.equal(reference.interval, null);
 });
 
-test("renders a version table, a control and per-runner medians", () => {
+test("renders a ranked table, a not-ranked table and per-runner medians", () => {
   const csv = [1, 2, 3, 4]
     .map((sample) => sweep(sample, 1 + sample * 0.1, flat))
     .join("\n");
   const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
-  analysis.rawRows = parseSamples(csv);
   const report = markdown(
     { runId: "1", distribution: "temurin", javaVersion: "17" },
     analysis,
     [{ key: "setup-java-Linux-x64-maven-abc", sizeBytes: 60 * 1024 * 1024 }],
   );
   assert.match(report, /# setup-java version sweep/);
-  assert.match(report, /## Comparable cohorts/);
-  assert.match(report, /### Dependency cache/);
-  assert.match(report, /\| v4\.8\.0 \|/);
+  assert.match(report, /## Versions ranked against `main`/);
+  assert.match(report, /## Measured but not ranked/);
   assert.match(report, /Holm-adjusted p/);
   assert.match(report, /A\/A control/);
   assert.match(report, /Harness noise floor/);
   assert.match(report, /## Per-runner medians/);
-  assert.match(report, /v1 and v2 do not restore Maven dependencies/);
   assert.match(report, /setup-java-Linux-x64-maven-abc/);
 });
 
-test("defines cohorts with only comparable cache contracts", () => {
-  assert.deepEqual(
-    COHORTS.map((cohort) => cohort.arms),
-    [
-      ["v1", "v2"],
-      ["v3", "v4", "v52"],
-      ["v56", "main"],
-    ],
-  );
+test("ranks only versions that do the same work from the same blob", () => {
+  // v1 and v2 restore nothing and v3 restores its own cache entry, so none of
+  // them measures the same work as main. Ranking them would report a difference
+  // in the workload as though it were a difference in the implementation.
+  assert.deepEqual(COMPARABLE_ARMS, ["v4", "v52", "v56", "main"]);
+  for (const arm of ["v1", "v2", "v3"]) {
+    const entry = VERSIONS.find((item) => item.arm === arm);
+    assert.equal(entry.comparable, false);
+    assert.ok(entry.reason.length > 0);
+  }
 });
 
-test("discards a runner whose slots for one version disagree", () => {
-  // Nine well-behaved runners and one whose v4 slots differ by seconds, which
-  // means that runner stalled rather than measured. Which version a stall lands
-  // on is arbitrary, so it must not reach the comparison.
-  const rows = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((sample) =>
-    sweep(sample, 1, flat),
+test("never gives a verdict to a version it cannot rank", () => {
+  // v3 is made dramatically slower, which on a ranked version would read as a
+  // regression. Because its cache entry is its own, that difference is
+  // confounded with blob placement and must not become a verdict.
+  const perVersion = { ...flat, v3: 9000 };
+  const csv = [1, 2, 3, 4, 5, 6]
+    .map((sample) => sweep(sample, 1, perVersion))
+    .join("\n");
+  const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
+  const report = markdown(
+    { runId: "1", distribution: "temurin", javaVersion: "17" },
+    analysis,
+    [],
   );
-  const stalled = ORDER.map((arm, index) => {
-    const slot = index + 1;
-    const elapsed = arm === "v4" && slot === 4 ? 12000 : 3000;
-    return `"10","${arm}","${slot}","${elapsed}"`;
-  }).join("\n");
-  const analysis = analyzeAgainstReference(
-    parseSamples([...rows, stalled].join("\n")),
-    ARMS,
-    "main",
+  const [ranked, notRanked] = report.split("## Measured but not ranked");
+  assert.doesNotMatch(ranked, /v3\.14\.1/);
+  assert.match(notRanked, /v3\.14\.1/);
+  assert.doesNotMatch(report, /\| v3\.14\.1 \|[^\n]*regression/);
+});
+
+test("applies Holm correction across the ranked family", () => {
+  // Three versions are tested against main in one run. A raw p-value near the
+  // boundary must not survive the correction as a verdict.
+  const perVersion = { ...flat, v4: 3040, v52: 3040, v56: 3040 };
+  const csv = [1, 2, 3, 4, 5, 6, 7, 8]
+    .map((sample) => sweep(sample, 1 + sample * 0.05, perVersion))
+    .join("\n");
+  const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
+  const report = markdown(
+    { runId: "1", distribution: "temurin", javaVersion: "17" },
+    analysis,
+    [],
   );
-  assert.deepEqual(
-    analysis.droppedRunners.map((entry) => entry.sample),
-    [10],
-  );
-  const v4 = analysis.comparisons.find((entry) => entry.arm === "v4");
-  assert.ok(Math.abs(v4.differenceSeconds) < 1e-9);
-  assert.equal(v4.verdict, "inconclusive");
+  assert.match(report, /Holm's step-down correction/);
 });

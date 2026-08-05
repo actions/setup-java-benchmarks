@@ -17,54 +17,80 @@ const REFERENCE = "main";
 // Ordered oldest to newest. The warm sweep measures them in this order and then
 // in reverse, so each version's two slots sit symmetrically about the middle of
 // the job.
+//
+// `comparable` records whether a version can be ranked against the reference at
+// all. A version is comparable only when it does the same work as `main` from
+// the same stored blob; anything else is measuring a difference in the workload
+// rather than in the implementation, and a verdict on it would mislead. Those
+// versions are still measured and published, but descriptively.
 export const VERSIONS = [
-  { arm: "v1", label: "v1.4.4", caching: "none" },
-  { arm: "v2", label: "v2.5.1", caching: "none" },
-  { arm: "v3", label: "v3.14.1", caching: "pom.xml" },
-  { arm: "v4", label: "v4.8.0", caching: "cache-dependency-path" },
-  { arm: "v52", label: "v5.2.0", caching: "cache-dependency-path" },
-  { arm: "v56", label: "v5.6.0", caching: "cache-dependency-path + wrapper" },
-  { arm: "main", label: "main", caching: "cache-dependency-path + wrapper" },
+  {
+    arm: "v1",
+    label: "v1.4.4",
+    caching: "none",
+    comparable: false,
+    reason:
+      "installs its own JDK and does no dependency caching, so its duration is a different workload rather than the same work done differently",
+  },
+  {
+    arm: "v2",
+    label: "v2.5.1",
+    caching: "none",
+    comparable: false,
+    reason:
+      "its bundled cache client is rejected by the current cache service, so it restores nothing and skips the work the other versions spend their time on",
+  },
+  {
+    arm: "v3",
+    label: "v3.14.1",
+    caching: "pom.xml",
+    comparable: false,
+    reason:
+      "predates `cache-dependency-path` and therefore restores its own cache entry; a stored blob's throughput is fixed for the life of the entry, so this difference is confounded with blob placement and pairing cannot remove it",
+  },
+  {
+    arm: "v4",
+    label: "v4.8.0",
+    caching: "cache-dependency-path",
+    comparable: true,
+  },
+  {
+    arm: "v52",
+    label: "v5.2.0",
+    caching: "cache-dependency-path",
+    comparable: true,
+  },
+  {
+    arm: "v56",
+    label: "v5.6.0",
+    caching: "cache-dependency-path + wrapper",
+    comparable: true,
+  },
+  {
+    arm: "main",
+    label: "main",
+    caching: "cache-dependency-path + wrapper",
+    comparable: true,
+  },
 ];
 
 const LABELS = new Map(VERSIONS.map((entry) => [entry.arm, entry.label]));
 
-export const COHORTS = [
-  {
-    id: "uncached",
-    label: "Uncached setup",
-    arms: ["v1", "v2"],
-    reference: "v2",
-    note: "v1 and v2 do not restore Maven dependencies, so this comparison is not comparable with cached versions.",
-  },
-  {
-    id: "dependency-cache",
-    label: "Dependency cache",
-    arms: ["v3", "v4", "v52"],
-    reference: "v52",
-    note: "v3 uses its older pom.xml cache-key strategy; compare it with caution. v4 and v5.2 share the controlled cache key.",
-  },
-  {
-    id: "wrapper-cache",
-    label: "Dependency plus wrapper cache",
-    arms: ["v56", "main"],
-    reference: "main",
-    note: "Both versions restore the dependency and Maven Wrapper caches.",
-  },
-];
+export const COMPARABLE_ARMS = VERSIONS.filter((entry) => entry.comparable).map(
+  (entry) => entry.arm,
+);
 
-function analyzeCohort(rows, cohort) {
-  return analyzeAgainstReference(
-    rows.filter((row) => cohort.arms.includes(row.arm)),
-    cohort.arms,
-    cohort.reference,
-  );
-}
-
-function correctCohort(analysis) {
+// Holm's step-down correction is applied across the comparable family only.
+// Every version in it is tested against the same reference in the same run, so
+// without a correction the chance that at least one of them clears 0.05 by luck
+// is far higher than 0.05. The descriptive versions are excluded because they
+// carry no verdict to correct.
+export function correctFamily(analysis) {
   const adjusted = holmAdjust(
     analysis.comparisons.map((comparison) =>
-      comparison.isReference ? null : comparison.pValue,
+      comparison.isReference || !isComparable(comparison.arm)
+        ? null
+        : comparison.pValue,
     ),
   );
   return {
@@ -74,12 +100,18 @@ function correctCohort(analysis) {
       adjustedPValue: adjusted[index],
       verdict: comparison.isReference
         ? "reference"
-        : classify(comparison.interval, {
-            noiseFloor: analysis.noiseFloorSeconds,
-            pValue: adjusted[index],
-          }),
+        : !isComparable(comparison.arm)
+          ? "not comparable"
+          : classify(comparison.interval, {
+              noiseFloor: analysis.noiseFloorSeconds,
+              pValue: adjusted[index],
+            }),
     })),
   };
+}
+
+function isComparable(arm) {
+  return VERSIONS.find((entry) => entry.arm === arm)?.comparable === true;
 }
 
 export function sha256(value) {
@@ -138,50 +170,60 @@ export function markdown(metadata, analysis, caches) {
     "order places each version's two slots symmetrically about the middle of the job,",
     "so drift across the job cancels.",
     "",
-    `Durations are the warm restore path with a Maven cache already populated, measured inside the job at millisecond resolution. Differences are against \`${REFERENCE}\`.`,
+    `Durations are the warm restore path with a Maven cache already populated, measured inside the job at millisecond resolution.`,
     "",
-    "## Comparable cohorts",
+    "## Versions ranked against `main`",
     "",
-    "The versions have different setup contracts, so they are compared only within behaviorally comparable cohorts. Holm correction controls the family-wise error rate within each cohort. Cross-cohort timings are descriptive and must not be used to rank versions.",
+    "Only versions that do the same work as `main` from the same stored cache entry are ranked. Holm's step-down correction is applied across this family, because every version in it is tested against the same reference in the same run and without it the chance that one clears 0.05 by luck is far above 0.05.",
+    "",
+    `| Version | Caching | Median (s) | Mean (s) | MAD (s) | vs ${REFERENCE} (s) | 95% CI | Holm-adjusted p | Verdict |`,
+    "| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | --- |",
   ];
-  const rawRows = analysis.rawRows ?? [];
-  for (const cohort of COHORTS) {
-    const cohortResult = correctCohort(analyzeCohort(rawRows, cohort));
+  const corrected = correctFamily(analysis);
+  const rankable = corrected.comparisons.filter((comparison) =>
+    COMPARABLE_ARMS.includes(comparison.arm),
+  );
+  const descriptive = corrected.comparisons.filter(
+    (comparison) => !COMPARABLE_ARMS.includes(comparison.arm),
+  );
+  for (const comparison of rankable) {
+    const entry = VERSIONS.find((item) => item.arm === comparison.arm);
+    const summary = comparison.summary;
+    const diff = comparison.isReference
+      ? "reference"
+      : comparison.differenceSeconds.toFixed(3);
+    const ci = comparison.interval
+      ? `${comparison.interval.low.toFixed(3)} to ${comparison.interval.high.toFixed(3)}`
+      : "n/a";
+    const p =
+      comparison.adjustedPValue === null
+        ? "n/a"
+        : comparison.adjustedPValue.toFixed(3);
     lines.push(
-      "",
-      `### ${cohort.label}`,
-      "",
-      cohort.note,
-      "",
-      `| Version | Median (s) | Mean (s) | MAD (s) | vs ${LABELS.get(cohort.reference)} (s) | 95% CI | Holm-adjusted p | Verdict |`,
-      "| --- | ---: | ---: | ---: | ---: | --- | ---: | --- |",
+      `| ${LABELS.get(comparison.arm)} | ${entry.caching} | ${summary.medianSeconds.toFixed(3)} | ${summary.meanSeconds.toFixed(3)} | ${summary.madSeconds.toFixed(3)} | ${diff} | ${ci} | ${p} | ${comparison.verdict} |`,
     );
-    for (const comparison of cohortResult.comparisons) {
-      const summary = comparison.summary;
-      const diff = comparison.isReference
-        ? "reference"
-        : comparison.differenceSeconds.toFixed(3);
-      const ci = comparison.interval
-        ? `${comparison.interval.low.toFixed(3)} to ${comparison.interval.high.toFixed(3)}`
-        : "n/a";
-      const p =
-        comparison.adjustedPValue === null
-          ? "n/a"
-          : comparison.adjustedPValue.toFixed(3);
-      lines.push(
-        `| ${LABELS.get(comparison.arm)} | ${summary.medianSeconds.toFixed(3)} | ${summary.meanSeconds.toFixed(3)} | ${summary.madSeconds.toFixed(3)} | ${diff} | ${ci} | ${p} | ${comparison.verdict} |`,
-      );
-    }
+  }
+  lines.push(
+    "",
+    "## Measured but not ranked",
+    "",
+    "These versions are measured on the same runners and in the same order, but they do not do the same work as `main`, so a verdict on them would report a difference in the workload as though it were a difference in the implementation. Their durations are published to show what the ranked versions are spending their time on.",
+    "",
+    "| Version | Caching | Median (s) | Mean (s) | MAD (s) | vs `main` (s) | Why it is not ranked |",
+    "| --- | --- | ---: | ---: | ---: | ---: | --- |",
+  );
+  for (const comparison of descriptive) {
+    const entry = VERSIONS.find((item) => item.arm === comparison.arm);
+    const summary = comparison.summary;
     lines.push(
-      "",
-      `A/A control (${LABELS.get(cohort.reference)} against itself): **${cohortResult.control.verdict}**${cohortResult.control.interval ? ` at ${formatInterval(cohortResult.control.interval)}` : ""}.`,
+      `| ${LABELS.get(comparison.arm)} | ${entry.caching} | ${summary.medianSeconds.toFixed(3)} | ${summary.meanSeconds.toFixed(3)} | ${summary.madSeconds.toFixed(3)} | ${comparison.differenceSeconds.toFixed(3)} | ${entry.reason} |`,
     );
   }
   lines.push(
     "",
     `Harness noise floor: ${analysis.noiseFloorSeconds.toFixed(3)}s (median spread between a version's own two slots on one runner). A difference smaller than this is reported as \`within-noise\`; one whose interval includes zero is reported as \`inconclusive\` rather than as a number that looks like a result.`,
     "",
-    `A/A control (\`${REFERENCE}\` against itself) reports **${control.verdict}**${control.interval ? ` at ${formatInterval(control.interval)}` : ""}. A healthy harness reports \`within-noise\` or \`inconclusive\` here; anything else means slot ordering is biasing results and the cohort tables above cannot be trusted.`,
+    `A/A control (\`${REFERENCE}\` against itself) reports **${control.verdict}**${control.interval ? ` at ${formatInterval(control.interval)}` : ""}. A healthy harness reports \`within-noise\` or \`inconclusive\` here; anything else means slot ordering is biasing results and the table above cannot be trusted.`,
     "",
     analysis.droppedRunners.length === 0
       ? "No runner was discarded for a stalled slot."
@@ -204,7 +246,7 @@ export function markdown(metadata, analysis, caches) {
     "",
     "## Caches",
     "",
-    "Every caching version restores the same Maven entry, so the stored blob cannot bias the comparison. v3 predates `cache-dependency-path` and keys on `pom.xml`, so it necessarily uses its own entry; treat its difference with more caution than the rest.",
+    "Every ranked version restores the same Maven entry, so the stored blob cannot bias the comparison between them. v3 predates `cache-dependency-path` and keys on `pom.xml`, so it necessarily restores its own entry; a blob's throughput is fixed for the life of the entry and identical on every runner, which is why v3 is measured but not ranked.",
     "",
     "v1 and v2 have no caching at all, so they skip the dependency restore entirely and their durations are not comparable with the rest. They are measured to show what the caching versions are spending their time on, not to be ranked against them.",
     "",
@@ -245,7 +287,6 @@ export async function main(env = process.env) {
   if (analysis.runners.length === 0) {
     throw new Error("No runner measured every version twice");
   }
-  analysis.rawRows = rows;
 
   const cacheEntries = await allPages(
     `/repos/${owner}/${repo}/actions/caches`,
@@ -272,7 +313,7 @@ export async function main(env = process.env) {
   await mkdir(RESULTS_DIR, { recursive: true });
   await writeFile(
     `${RESULTS_DIR}/results.json`,
-    `${JSON.stringify({ metadata, analysis: { ...analysis, rawRows: undefined, runners: undefined }, caches }, null, 2)}\n`,
+    `${JSON.stringify({ metadata, analysis: { ...analysis, runners: undefined }, caches }, null, 2)}\n`,
   );
   await writeFile(
     `${RESULTS_DIR}/results.csv`,

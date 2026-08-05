@@ -45,9 +45,19 @@ Each action version runs with Java 17 on `ubuntu-24.04`:
 
 v1 predates distribution selection and integrated dependency caching. It runs only its native Zulu installer path. v2 supports the Temurin and Microsoft scenarios, but its bundled legacy cache client is rejected by the current Actions cache service. v1 and v2 therefore have no Maven cache storage, and their cold/warm labels are repeated uncached samples.
 
-A seed job compiles Spring PetClinic once to populate a single Maven cache entry. Every measurement runner then sets up all seven versions in one job, in the order `v1..main` followed by `main..v1`, deleting `~/.m2` before each slot. The report keeps the same-runner measurements but compares only behaviorally comparable cohorts, applying Holm correction within each cohort rather than ranking every version against `main`.
+A seed job compiles Spring PetClinic once to populate a single Maven cache entry. Every measurement runner then sets up all seven versions in one job, in the order `v1..main` followed by `main..v1`, deleting `~/.m2` before each slot. The report compares every version against `main` with a paired interval per runner, but it ranks only the versions that do the same work from the same stored blob.
 
-The report has three cohorts: **uncached setup** (`v1`, `v2`), **dependency cache** (`v3`, `v4`, `v5.2`), and **dependency plus wrapper cache** (`v5.6`, `main`). v1/v2 are not comparable with cached versions. v3 predates `cache-dependency-path` and keys on `pom.xml`, so its comparison within the dependency-cache cohort is explicitly caveated; v4 and v5.2 share one controlled cache entry. v5.6 and `main` both restore the dependency and Maven Wrapper caches. Cross-cohort timings are descriptive and must not be used to rank versions.
+**Only comparable versions are ranked.** v4, v5.2, v5.6 and `main` all restore the same seeded entry through `cache-dependency-path`, so a difference between them is a difference in the implementation. They are ranked against `main`, with Holm's step-down correction across that family: they are tested against one reference in one run, so without a correction the chance that one of them clears 0.05 by luck is far above 0.05.
+
+v1, v2 and v3 are measured on the same runners and published, but they carry no verdict, because a verdict would report a difference in the *workload* as though it were a difference in the implementation:
+
+| Version | Why it is not ranked |
+| --- | --- |
+| v1.4.4 | Installs its own JDK and does no dependency caching |
+| v2.5.1 | Its bundled cache client is rejected by the current cache service, so it restores nothing |
+| v3.14.1 | Predates `cache-dependency-path` and keys on `pom.xml`, so it restores its own entry — the blob confound described above, which pairing cannot remove |
+
+v3 is the instructive case. In run 30979614347 it took 3.69 s and 3.89 s on two runners that ran v4 in 0.50 s and 0.52 s moments later in the same job. A sevenfold gap that appears on some runners and not others is blob placement, not code, and ranking it would have published a `regression` verdict for it.
 
 Spring PetClinic and third-party actions are pinned to commits. `setup-java@main` intentionally remains a moving ref so each run evaluates the current upcoming v6 code; the report records the `main` commit observed when it is generated.
 
