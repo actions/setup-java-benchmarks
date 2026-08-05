@@ -1,0 +1,220 @@
+name: JDK cache
+
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: Warm samples per arm
+        required: true
+        type: choice
+        options:
+          - "2"
+          - "6"
+          - "10"
+          - "20"
+        default: "10"
+      distribution:
+        description: JDK distribution
+        required: true
+        type: choice
+        options:
+          - microsoft
+          - temurin
+        default: microsoft
+      java-version:
+        description: Java feature version
+        required: true
+        type: string
+        default: "17"
+      cleanup-caches:
+        description: Delete benchmark caches after measuring them
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  PETCLINIC_REF: f182358d02e4a68e52bdbabf55ca7800288511e7
+
+concurrency:
+  group: jdk-cache-benchmark
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare JDK cache benchmark
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Delete existing JDK caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --limit 10000 --json id,key \
+            --jq '.[] | select(.key | startswith("setup-java-jdk-")) | .id' |
+          while read -r cache_id; do
+            gh cache delete "$cache_id"
+          done
+
+  baseline-seed:
+    name: baseline / seed
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Prepare baseline cache identity
+        env:
+          BENCHMARK_ID: jdk-cache-baseline-${{ github.run_id }}
+        run: |
+          printf '%s\n' "$BENCHMARK_ID" > .jdk-cache-key
+          printf '# jdk-cache-benchmark=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
+      # Deliberately benchmark the path where the requested JDK is not preinstalled.
+      - name: Purge matching runner tool cache
+        run: rm -rf "$RUNNER_TOOL_CACHE"/Java_*
+      - name: Setup Java main
+        uses: actions/setup-java@main
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-jdk: false
+          cache-dependency-path: .jdk-cache-key
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress compile
+
+  treatment-seed:
+    name: treatment / seed
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Prepare treatment cache identity
+        env:
+          BENCHMARK_ID: jdk-cache-treatment-${{ github.run_id }}
+        run: |
+          printf '%s\n' "$BENCHMARK_ID" > .jdk-cache-key
+          printf '# jdk-cache-benchmark=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
+      # The seed must download the JDK so setup-java registers its post-job save.
+      - name: Purge matching runner tool cache
+        run: rm -rf "$RUNNER_TOOL_CACHE"/Java_*
+      - name: Setup Java main
+        uses: actions/setup-java@main
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-jdk: true
+          cache-dependency-path: .jdk-cache-key
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress compile
+
+  baseline-measure:
+    name: baseline / warm / ${{ matrix.sample }}
+    needs: baseline-seed
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: ${{ fromJSON(inputs.samples == '20' && '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]' || inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Prepare baseline cache identity
+        env:
+          BENCHMARK_ID: jdk-cache-baseline-${{ github.run_id }}
+        run: |
+          printf '%s\n' "$BENCHMARK_ID" > .jdk-cache-key
+          printf '# jdk-cache-benchmark=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
+      - name: Purge matching runner tool cache
+        run: rm -rf "$RUNNER_TOOL_CACHE"/Java_*
+      - name: Setup Java main
+        uses: actions/setup-java@main
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-jdk: false
+          cache-read-only: true
+          cache-dependency-path: .jdk-cache-key
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress compile
+
+  treatment-measure:
+    name: treatment / warm / ${{ matrix.sample }}
+    needs: treatment-seed
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: ${{ fromJSON(inputs.samples == '20' && '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]' || inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
+    steps:
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          persist-credentials: false
+      - name: Prepare treatment cache identity
+        env:
+          BENCHMARK_ID: jdk-cache-treatment-${{ github.run_id }}
+        run: |
+          printf '%s\n' "$BENCHMARK_ID" > .jdk-cache-key
+          printf '# jdk-cache-benchmark=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
+      - name: Purge matching runner tool cache
+        run: rm -rf "$RUNNER_TOOL_CACHE"/Java_*
+      - name: Setup Java main
+        uses: actions/setup-java@main
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-jdk: true
+          cache-read-only: true
+          cache-dependency-path: .jdk-cache-key
+      - name: Build PetClinic
+        run: ./mvnw --batch-mode --no-transfer-progress compile
+
+  report:
+    name: Report
+    needs:
+      - baseline-seed
+      - treatment-seed
+      - baseline-measure
+      - treatment-measure
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Generate JDK cache report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SAMPLES: ${{ inputs.samples }}
+          DISTRIBUTION: ${{ inputs.distribution }}
+          JAVA_VERSION: ${{ inputs.java-version }}
+          CLEANUP_CACHES: ${{ inputs.cleanup-caches }}
+        run: node scripts/report-jdk-cache.mjs
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: jdk-cache-${{ github.run_id }}
+          path: jdk-cache-results/
+          retention-days: 30
