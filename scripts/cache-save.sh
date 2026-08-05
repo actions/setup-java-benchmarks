@@ -294,6 +294,21 @@ const cache = loadCacheClient(require, manifest);
 const started = Date.now();
 const cacheId = await cache.saveCache([fixtureDir], key);
 const elapsedMs = Date.now() - started;
+
+// `saveCache` swallows a failed reservation, logs a warning and returns -1, so
+// a slot that uploaded nothing at all still produces a plausible-looking
+// duration. The first live run measured 10.278 s +/- 0.008 s across ten
+// runners, which is a retry backoff rather than a transfer — the cache service
+// URL is injected into action steps only, never into `run:` steps, so every
+// reservation failed with "Cache Service Url not found". A benchmark that
+// reports a number for work it did not do is worse than one that fails.
+if (!Number.isFinite(cacheId) || cacheId <= 0) {
+  throw new Error(
+    `saveCache did not store ${key} (returned ${cacheId}). ` +
+      "The cache service is not reachable from this step, so the measurement " +
+      "would be a retry backoff rather than an upload.",
+  );
+}
 console.log(`Saved ${key} as cache ${cacheId} in ${elapsedMs} ms`);
 if (resultsFile) {
   const { record } = await import(
