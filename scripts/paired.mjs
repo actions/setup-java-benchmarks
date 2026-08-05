@@ -228,9 +228,17 @@ export function analyzePairs(
   };
 }
 
-// Compares every arm against a reference arm, one paired difference per runner.
-// Used where the workflow measures more than two implementations in the same
-// job, such as the version sweep.
+// Compares a reference arm against every other arm, one paired difference per
+// runner. Used where the workflow measures more than two implementations in the
+// same job, such as the version sweep.
+//
+// The difference is reference minus arm, so the reference plays the same role
+// the candidate plays in the two-arm workflows: it is the code under test and
+// each other arm is a baseline it is measured against. In the version sweep the
+// reference is `main`, which is the newest code, so this is the direction that
+// makes the verdicts mean what they say. Differencing the other way would call
+// a released version a `regression` for being slower than the code that
+// succeeded it, when what has been measured is `main` being faster.
 export function analyzeAgainstReference(rows, arms, reference) {
   const allRunners = groupByRunner(rows, arms);
   // Same filter as the two-arm workflows, applied across every arm: a runner
@@ -266,7 +274,7 @@ export function analyzeAgainstReference(rows, arms, reference) {
   const comparisons = arms.map((arm, index) => {
     const values = perArm.get(arm);
     const differences = values.map(
-      (value, runner) => value - referenceValues[runner],
+      (value, runner) => referenceValues[runner] - value,
     );
     const isReference = arm === reference;
     const interval = isReference

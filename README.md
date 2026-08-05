@@ -45,9 +45,11 @@ Each action version runs with Java 17 on `ubuntu-24.04`:
 
 v1 predates distribution selection and integrated dependency caching. It runs only its native Zulu installer path. v2 supports the Temurin and Microsoft scenarios, but its bundled legacy cache client is rejected by the current Actions cache service. v1 and v2 therefore have no Maven cache storage, and their cold/warm labels are repeated uncached samples.
 
-A seed job compiles Spring PetClinic once to populate a single Maven cache entry. Every measurement runner then sets up all seven versions in one job, in the order `v1..main` followed by `main..v1`, deleting `~/.m2` before each slot. The report compares every version against `main` with a paired interval per runner, but it ranks only the versions that do the same work from the same stored blob.
+A seed job compiles Spring PetClinic once to populate a single Maven cache entry. Every measurement runner then sets up all seven versions in one job, in the order `v1..main` followed by `main..v1`, deleting `~/.m2` before each slot. The report compares `main` with every version using a paired interval per runner, but it ranks only the versions that do the same work from the same stored blob.
 
-**Only comparable versions are ranked.** v4, v5.2, v5.6 and `main` all restore the same seeded entry through `cache-dependency-path`, so a difference between them is a difference in the implementation. They are ranked against `main`, with Holm's step-down correction across that family: they are tested against one reference in one run, so without a correction the chance that one of them clears 0.05 by luck is far above 0.05.
+**`main` is the thing under test, not the thing being ranked.** `main` is the newest code, and every released version is a baseline it is measured against, exactly as the two-arm workflows measure a candidate against a baseline. So the reported difference is `main` minus the version, and the verdict describes `main`: an `improvement` means `main` is faster than that version. Differencing the other way would label a released version a `regression` for being slower than the code that succeeded it, which inverts what was actually measured — the finding there is that `main` got faster.
+
+**Only comparable versions are ranked.** v4, v5.2, v5.6 and `main` all restore the same seeded entry through `cache-dependency-path`, so a difference between them is a difference in the implementation. `main` is ranked against each of them, with Holm's step-down correction across that family: it is tested against every one of them in one run, so without a correction the chance that one comparison clears 0.05 by luck is far above 0.05.
 
 v1, v2 and v3 are measured on the same runners and published, but they carry no verdict, because a verdict would report a difference in the *workload* as though it were a difference in the implementation:
 
@@ -57,7 +59,7 @@ v1, v2 and v3 are measured on the same runners and published, but they carry no 
 | v2.5.1 | Its bundled cache client is rejected by the current cache service, so it restores nothing |
 | v3.14.1 | Predates `cache-dependency-path` and keys on `pom.xml`, so it restores its own entry — the blob confound described above, which pairing cannot remove |
 
-v3 is the instructive case. In run 30979614347 it took 3.69 s and 3.89 s on two runners that ran v4 in 0.50 s and 0.52 s moments later in the same job. A sevenfold gap that appears on some runners and not others is blob placement, not code, and ranking it would have published a `regression` verdict for it.
+v3 is the instructive case. In run 30979614347 it took 3.69 s and 3.89 s on two runners that ran v4 in 0.50 s and 0.52 s moments later in the same job. A sevenfold gap that appears on some runners and not others is blob placement, not code, and ranking it would have published a verdict for it.
 
 Spring PetClinic and third-party actions are pinned to commits. `setup-java@main` intentionally remains a moving ref so each run evaluates the current upcoming v6 code; the report records the `main` commit observed when it is generated.
 

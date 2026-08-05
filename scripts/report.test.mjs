@@ -53,7 +53,8 @@ test("keeps only runners that measured every version twice", () => {
 
 test("removes between-runner speed differences", () => {
   // Runners differ by up to 3x, and every version is 500ms slower than main.
-  // Pairing within a runner must recover 500ms regardless of the spread.
+  // Pairing within a runner must recover 500ms regardless of the spread. The
+  // difference is main minus the version, so main being faster reads negative.
   const perVersion = {
     ...flat,
     v1: 3500,
@@ -68,8 +69,32 @@ test("removes between-runner speed differences", () => {
     .join("\n");
   const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
   const v4 = analysis.comparisons.find((entry) => entry.arm === "v4");
-  assert.ok(Math.abs(v4.differenceSeconds - 1.125) < 0.001);
-  assert.equal(v4.verdict, "regression");
+  assert.ok(Math.abs(v4.differenceSeconds + 1.125) < 0.001);
+  assert.equal(v4.verdict, "improvement");
+});
+
+// main is the newest code. Reporting a released version as a `regression` for
+// being slower than the code that succeeded it inverts what was measured, so
+// the direction is pinned here rather than left to the reader of the table.
+test("credits main when main is the faster one", () => {
+  const perVersion = { ...flat, v4: 4250, v52: 4250, v56: 4250 };
+  const csv = [1, 2, 3, 4, 5, 6]
+    .map((sample) => sweep(sample, 0.5 + sample * 0.5, perVersion))
+    .join("\n");
+  const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
+  const v56 = analysis.comparisons.find((entry) => entry.arm === "v56");
+  assert.ok(
+    v56.differenceSeconds < 0,
+    "main is faster, so the difference must be negative",
+  );
+  assert.equal(v56.verdict, "improvement");
+  const rendered = markdown(
+    { runId: "1", distribution: "temurin", javaVersion: "17" },
+    analysis,
+    [],
+  );
+  assert.match(rendered, /Verdict for `main`/);
+  assert.doesNotMatch(rendered, /regression/);
 });
 
 test("cancels linear drift across the job", () => {
@@ -103,7 +128,7 @@ test("renders a ranked table, a not-ranked table and per-runner medians", () => 
     [{ key: "setup-java-Linux-x64-maven-abc", sizeBytes: 60 * 1024 * 1024 }],
   );
   assert.match(report, /# setup-java version sweep/);
-  assert.match(report, /## Versions ranked against `main`/);
+  assert.match(report, /## How `main` compares with each released version/);
   assert.match(report, /## Measured but not ranked/);
   assert.match(report, /Holm-adjusted p/);
   assert.match(report, /A\/A control/);

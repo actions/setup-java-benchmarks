@@ -172,11 +172,13 @@ export function markdown(metadata, analysis, caches) {
     "",
     `Durations are the warm restore path with a Maven cache already populated, measured inside the job at millisecond resolution.`,
     "",
-    "## Versions ranked against `main`",
+    "## How `main` compares with each released version",
     "",
-    "Only versions that do the same work as `main` from the same stored cache entry are ranked. Holm's step-down correction is applied across this family, because every version in it is tested against the same reference in the same run and without it the chance that one clears 0.05 by luck is far above 0.05.",
+    "`main` is the newest code, so it is the thing under test and each released version is a baseline it is measured against. Every number and verdict below describes **`main`**: a negative difference and an `improvement` verdict mean `main` is faster than that version.",
     "",
-    `| Version | Caching | Median (s) | Mean (s) | MAD (s) | vs ${REFERENCE} (s) | 95% CI | Holm-adjusted p | Verdict |`,
+    "Only versions that do the same work as `main` from the same stored cache entry are ranked. Holm's step-down correction is applied across this family, because `main` is tested against every one of them in the same run and without it the chance that one clears 0.05 by luck is far above 0.05.",
+    "",
+    `| Compared with | Caching | Median (s) | Mean (s) | MAD (s) | \`${REFERENCE}\` vs it (s) | 95% CI | Holm-adjusted p | Verdict for \`${REFERENCE}\` |`,
     "| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | --- |",
   ];
   const corrected = correctFamily(analysis);
@@ -209,7 +211,7 @@ export function markdown(metadata, analysis, caches) {
     "",
     "These versions are measured on the same runners and in the same order, but they do not do the same work as `main`, so a verdict on them would report a difference in the workload as though it were a difference in the implementation. Their durations are published to show what the ranked versions are spending their time on.",
     "",
-    "| Version | Caching | Median (s) | Mean (s) | MAD (s) | vs `main` (s) | Why it is not ranked |",
+    "| Version | Caching | Median (s) | Mean (s) | MAD (s) | `main` vs it (s) | Why it is not ranked |",
     "| --- | --- | ---: | ---: | ---: | ---: | --- |",
   );
   for (const comparison of descriptive) {
