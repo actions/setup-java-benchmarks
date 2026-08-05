@@ -35,7 +35,28 @@ The report job writes a Markdown summary and uploads raw JSON and CSV files. Ben
 
 ### Focused cache restore
 
-The **Focused cache restore** workflow isolates the setup step for comparing v4 with `main`. It uses a pinned Temurin JDK from the hosted runner tool cache, seeds a synthetic 160 MiB dependency cache for both versions and a 9 MiB wrapper cache for `main`, and runs no Maven command. Warm measurement jobs therefore contain no JDK or Maven Central downloads; they measure JDK discovery and Actions cache restoration only.
+The **Focused cache restore** workflow isolates the setup step to compare two `actions/setup-java` refs (by default `v4.8.0` against `main`). It uses a pinned Temurin JDK from the hosted runner tool cache, seeds a synthetic 160 MiB dependency cache for both arms and a 9 MiB wrapper cache for the candidate, and runs no Maven command. Measurement jobs therefore contain no JDK or Maven Central downloads; they measure JDK discovery and Actions cache restoration only.
+
+This workflow is the reference for how a comparison should be measured here. Three properties make its verdicts trustworthy:
+
+**Millisecond timing.** The Actions API reports step `started_at` and `completed_at` only to the nearest second. Setup steps take two to six seconds, so reading durations from the API quantizes every measurement to ±500 ms — the same magnitude as the effects being measured. Timing is therefore taken inside the job with `scripts/measure.mjs`.
+
+**Same-runner pairing.** Between-runner variance on hosted runners is larger than the effects under test, and it cannot be averaged away by adding more independent jobs to each arm. Both arms run in the *same* job in ABBA order — baseline, candidate, candidate, baseline — so each runner yields one paired difference with the runner's own speed cancelled out. The mirrored order also cancels drift across the four slots. Each measured slot deletes `~/.m2` first so every restore extracts into an empty tree.
+
+**Intervals, not point estimates.** `scripts/stats.mjs` reports a bootstrap 95% confidence interval, a permutation p-value, and a Hodges-Lehmann shift for every comparison, and turns them into an explicit verdict. A comparison whose interval includes zero is reported as `inconclusive` rather than as a number that looks like a result.
+
+The report also publishes two guard rails:
+
+- A **noise floor**, the median spread between the two slots of the same arm on one runner. An effect smaller than this is reported as `within-noise` even when its interval excludes zero.
+- An **A/A control**, the same estimator applied to the baseline against itself. It costs no extra jobs because each arm is already measured twice per runner. A healthy run reports `within-noise` or `inconclusive`; anything else means slot ordering is biasing the results and the headline verdict cannot be trusted.
+
+Point `baseline-ref` and `candidate-ref` at any two refs — including a PR branch — to check whether a change delivers a real improvement.
+
+#### Why this replaced the previous design
+
+The earlier version of this workflow ran each arm as its own matrix of independent jobs, read durations from the Actions API, and reported a "paired median delta" that paired `sample N` of one arm with `sample N` of the other. Those samples shared no runner and no point in time, so the pairing removed no variance at all.
+
+Two consecutive runs of that harness against an unchanged `v4.8.0` — where the true difference is exactly zero — produced medians of 2 s and 3 s, a spurious 1.2 s separation whose confidence interval excluded zero. Over the same pair of runs the reported candidate delta flipped from +0.6 s to −0.8 s. `scripts/stats.test.mjs` pins that dataset as a regression test so unpaired sampling is not reintroduced.
 
 ### JDK cache
 
@@ -63,7 +84,7 @@ The summary reports medians for:
 
 Public repositories do not pay for standard GitHub-hosted runners. The estimated minutes are included to make the results applicable to private repositories; actual charges depend on the account plan and runner type.
 
-Network throughput, hosted-runner image changes, upstream artifact availability, and runner load all introduce variance. Compare multiple iterations and multiple workflow runs before drawing conclusions.
+Network throughput, hosted-runner image changes, upstream artifact availability, and runner load all introduce variance. The **Benchmark setup-java** and **JDK cache** workflows still read step durations from the Actions API at one-second resolution and compare arms across independent runners, so treat their sub-second differences as indicative only and compare multiple runs before drawing conclusions. Use **Focused cache restore** when a difference needs to be established rather than illustrated; it is the only workflow here that reports a confidence interval, a noise floor, and an A/A control.
 
 ## Local checks
 

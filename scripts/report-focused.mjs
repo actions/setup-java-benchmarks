@@ -1,31 +1,154 @@
-import {appendFile, mkdir, writeFile} from 'node:fs/promises';
+import {appendFile, mkdir, readdir, readFile, writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 
-import {hashFilesSingle, median, secondsBetween} from './report.mjs';
+import {hashFilesSingle} from './report.mjs';
+import {
+  classify,
+  describeVerdict,
+  formatInterval,
+  hodgesLehmann,
+  mean,
+  median,
+  medianAbsoluteDeviation,
+  pairedInterval,
+  pairedPermutationTest,
+  quantile,
+  standardDeviation
+} from './stats.mjs';
 
 const API_VERSION = '2022-11-28';
-const JOB_PATTERN = /^(v4|main) \/ warm \/ (\d+)$/;
+const RESULTS_DIR = '.benchmark-results';
 
-export function parseFocusedJob(name) {
-  const match = name.match(JOB_PATTERN);
-  if (!match) return null;
-  return {version: match[1], sample: Number(match[2])};
+// Every measurement job uploads its own CSV so that merging the artifacts
+// cannot overwrite another runner's samples.
+export async function readSampleFiles(directory = RESULTS_DIR) {
+  const entries = await readdir(directory);
+  const files = entries.filter(
+    entry => entry.startsWith('focused-timings') && entry.endsWith('.csv')
+  );
+  if (files.length === 0) {
+    throw new Error(`No focused timing CSVs found in ${directory}`);
+  }
+  const contents = await Promise.all(
+    files.sort().map(file => readFile(join(directory, file), 'utf8'))
+  );
+  return contents.join('\n');
 }
 
-function quantile(values, percentile) {
-  const sorted = [...values].sort((a, b) => a - b);
-  const position = (sorted.length - 1) * percentile;
-  const lower = Math.floor(position);
-  const upper = Math.ceil(position);
-  if (lower === upper) return sorted[lower];
-  return (
-    sorted[lower] +
-    (sorted[upper] - sorted[lower]) * (position - lower)
+// Each runner measures four slots in ABBA order: baseline, candidate,
+// candidate, baseline. Averaging the two slots per arm cancels any linear drift
+// across the job, and differencing within a runner removes between-runner
+// variance.
+export function parseSamples(csv) {
+  return csv
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map(line => {
+      const [sample, arm, slot, elapsedMs] = line
+        .split(',')
+        .map(value => value.replace(/^"|"$/g, ''));
+      return {
+        sample: Number(sample),
+        arm,
+        slot: Number(slot),
+        seconds: Number(elapsedMs) / 1000
+      };
+    });
+}
+
+// One paired observation per runner, plus the within-arm repeat difference that
+// serves as a null-effect (A/A) measurement requiring no extra jobs.
+export function buildPairs(rows) {
+  const bySample = new Map();
+  for (const row of rows) {
+    const entry = bySample.get(row.sample) ?? {baseline: [], candidate: []};
+    if (!entry[row.arm]) continue;
+    entry[row.arm].push(row);
+    bySample.set(row.sample, entry);
+  }
+  const pairs = [];
+  for (const [sample, entry] of [...bySample.entries()].sort(
+    (a, b) => a[0] - b[0]
+  )) {
+    if (entry.baseline.length !== 2 || entry.candidate.length !== 2) continue;
+    const baselineSlots = entry.baseline
+      .sort((a, b) => a.slot - b.slot)
+      .map(row => row.seconds);
+    const candidateSlots = entry.candidate
+      .sort((a, b) => a.slot - b.slot)
+      .map(row => row.seconds);
+    pairs.push({
+      sample,
+      baselineSlots,
+      candidateSlots,
+      baseline: mean(baselineSlots),
+      candidate: mean(candidateSlots),
+      difference: mean(candidateSlots) - mean(baselineSlots),
+      baselineRepeatDelta: baselineSlots[1] - baselineSlots[0],
+      candidateRepeatDelta: candidateSlots[1] - candidateSlots[0]
+    });
+  }
+  return pairs;
+}
+
+// The smallest effect the harness can trust. Derived from how much the same
+// implementation varies between its two slots on one runner.
+export function noiseFloor(pairs) {
+  const repeats = [
+    ...pairs.map(pair => Math.abs(pair.baselineRepeatDelta)),
+    ...pairs.map(pair => Math.abs(pair.candidateRepeatDelta))
+  ];
+  if (repeats.length === 0) return 0;
+  return quantile(repeats, 0.5);
+}
+
+function armSummary(name, values) {
+  return {
+    arm: name,
+    samples: values.length,
+    meanSeconds: mean(values),
+    medianSeconds: median(values),
+    standardDeviationSeconds: standardDeviation(values),
+    madSeconds: medianAbsoluteDeviation(values),
+    p95Seconds: quantile(values, 0.95)
+  };
+}
+
+export function analyze(rows) {
+  const pairs = buildPairs(rows);
+  const differences = pairs.map(pair => pair.difference);
+  const baselineValues = pairs.map(pair => pair.baseline);
+  const candidateValues = pairs.map(pair => pair.candidate);
+  const floor = noiseFloor(pairs);
+  const interval = pairedInterval(differences, {seed: 1});
+  // The same estimator applied to the within-arm repeats. A trustworthy harness
+  // must not resolve a difference here, because it compares an arm with itself.
+  // Judged against the same noise floor as the real effect, so a healthy run
+  // reports `within-noise` or `inconclusive`.
+  const controlInterval = pairedInterval(
+    pairs.map(pair => pair.baselineRepeatDelta),
+    {seed: 2}
   );
+  return {
+    pairs,
+    noiseFloorSeconds: floor,
+    baseline: armSummary('baseline', baselineValues),
+    candidate: armSummary('candidate', candidateValues),
+    interval,
+    pValue: pairedPermutationTest(differences, {seed: 3}),
+    shiftSeconds: hodgesLehmann(candidateValues, baselineValues),
+    verdict: classify(interval, {noiseFloor: floor}),
+    control: {
+      interval: controlInterval,
+      verdict: classify(controlInterval, {noiseFloor: floor})
+    }
+  };
 }
 
 function csvValue(value) {
-  return `"${String(value).replaceAll('"', '""')}"`;
+  return `"${String(value ?? '').replaceAll('"', '""')}"`;
 }
 
 async function api(path, token, options = {}) {
@@ -58,76 +181,58 @@ async function allPages(path, field, token) {
   }
 }
 
-function summarize(rows, version) {
-  const values = rows
-    .filter(row => row.version === version)
-    .map(row => row.setupSeconds);
-  return {
-    version,
-    samples: values.length,
-    minimumSeconds: Math.min(...values),
-    medianSeconds: median(values),
-    p95Seconds: quantile(values, 0.95),
-    maximumSeconds: Math.max(...values)
-  };
-}
-
-function markdown(metadata, rows, summaries, caches) {
+export function markdown(metadata, analysis, caches) {
+  const {baseline, candidate, interval, control} = analysis;
   const lines = [
     '# Focused cache restore benchmark',
     '',
-    `Temurin ${metadata.javaVersion}, ${metadata.samples} warm samples per version, run ${metadata.runId}.`,
+    `Temurin ${metadata.javaVersion}, ${analysis.pairs.length} runners x 2 paired observations, run ${metadata.runId}.`,
+    `Baseline \`${metadata.baselineRef}\` vs candidate \`${metadata.candidateRef}\` from \`${metadata.setupJavaRepository}\`.`,
     '',
-    '| Version | Samples | Min (s) | Median (s) | p95 (s) | Max (s) |',
-    '| --- | ---: | ---: | ---: | ---: | ---: |'
+    '## Verdict',
+    '',
+    `**${describeVerdict(analysis.verdict)}**`,
+    '',
+    `Paired difference (candidate - baseline): **${formatInterval(interval, {digits: 3})}**.`,
+    `Permutation p-value: ${analysis.pValue.toFixed(3)}. Hodges-Lehmann shift: ${analysis.shiftSeconds.toFixed(3)}s.`,
+    `Harness noise floor: ${analysis.noiseFloorSeconds.toFixed(3)}s (median within-runner repeat spread).`,
+    '',
+    `A/A control (baseline against itself) reports **${control.verdict}** at ${formatInterval(control.interval, {digits: 3})}. A healthy harness reports \`within-noise\` or \`inconclusive\` here; an \`improvement\` or \`regression\` means slot ordering is biasing results and the verdict above cannot be trusted.`,
+    '',
+    '## Arms',
+    '',
+    '| Arm | Runners | Mean (s) | Median (s) | SD (s) | MAD (s) | p95 (s) |',
+    '| --- | ---: | ---: | ---: | ---: | ---: | ---: |'
   ];
-  for (const summary of summaries) {
+  for (const summary of [baseline, candidate]) {
     lines.push(
-      `| ${summary.version} | ${summary.samples} | ${summary.minimumSeconds.toFixed(1)} | ${summary.medianSeconds.toFixed(1)} | ${summary.p95Seconds.toFixed(1)} | ${summary.maximumSeconds.toFixed(1)} |`
+      `| ${summary.arm} | ${summary.samples} | ${summary.meanSeconds.toFixed(3)} | ${summary.medianSeconds.toFixed(3)} | ${summary.standardDeviationSeconds?.toFixed(3) ?? 'n/a'} | ${summary.madSeconds.toFixed(3)} | ${summary.p95Seconds.toFixed(3)} |`
     );
-  }
-  const deltas = [];
-  for (let sample = 1; sample <= metadata.samples; sample += 1) {
-    const v4 = rows.find(
-      row => row.version === 'v4' && row.sample === sample
-    );
-    const main = rows.find(
-      row => row.version === 'main' && row.sample === sample
-    );
-    if (v4 && main) deltas.push(main.setupSeconds - v4.setupSeconds);
   }
   lines.push(
     '',
-    `Paired median delta (main - v4): **${median(deltas).toFixed(1)}s**. Negative means main was faster.`,
+    'All durations are measured inside the job with millisecond resolution. The Actions API reports step timestamps only to the nearest second, which is too coarse for effects of this size.',
     '',
-    '## Samples',
+    '## Paired samples',
     '',
-    '| Sample | v4 (s) | main (s) | Delta (s) |',
-    '| ---: | ---: | ---: | ---: |'
+    '| Runner | baseline slot 1 (s) | candidate slot 2 (s) | candidate slot 3 (s) | baseline slot 4 (s) | Paired delta (s) |',
+    '| ---: | ---: | ---: | ---: | ---: | ---: |'
   );
-  for (let sample = 1; sample <= metadata.samples; sample += 1) {
-    const v4 = rows.find(
-      row => row.version === 'v4' && row.sample === sample
+  for (const pair of analysis.pairs) {
+    lines.push(
+      `| ${pair.sample} | ${pair.baselineSlots[0].toFixed(3)} | ${pair.candidateSlots[0].toFixed(3)} | ${pair.candidateSlots[1].toFixed(3)} | ${pair.baselineSlots[1].toFixed(3)} | ${pair.difference.toFixed(3)} |`
     );
-    const main = rows.find(
-      row => row.version === 'main' && row.sample === sample
-    );
-    if (v4 && main) {
-      lines.push(
-        `| ${sample} | ${v4.setupSeconds.toFixed(1)} | ${main.setupSeconds.toFixed(1)} | ${(main.setupSeconds - v4.setupSeconds).toFixed(1)} |`
-      );
-    }
   }
   lines.push(
     '',
     '## Cache fixtures',
     '',
-    '| Version | Cache | Size (MiB) |',
+    '| Arm | Cache | Size (MiB) |',
     '| --- | --- | ---: |'
   );
   for (const cache of caches) {
     lines.push(
-      `| ${cache.version} | ${cache.type} | ${(cache.sizeBytes / 1024 / 1024).toFixed(1)} |`
+      `| ${cache.arm} | ${cache.type} | ${(cache.sizeBytes / 1024 / 1024).toFixed(1)} |`
     );
   }
   return `${lines.join('\n')}\n`;
@@ -137,70 +242,52 @@ export async function main(env = process.env) {
   const [owner, repo] = env.GITHUB_REPOSITORY.split('/');
   const token = env.GH_TOKEN;
   const runId = env.GITHUB_RUN_ID;
-  const attempt = env.GITHUB_RUN_ATTEMPT;
-  const samples = Number(env.SAMPLES);
-  const javaVersion = env.JAVA_VERSION;
-  if (!owner || !repo || !token || !runId || !attempt || !samples) {
+  const baselineRef = env.BASELINE_REF;
+  const candidateRef = env.CANDIDATE_REF;
+  const setupJavaRepository = env.SETUP_JAVA_REPOSITORY;
+  if (!owner || !repo || !token || !runId || !baselineRef || !candidateRef) {
     throw new Error('Missing required GitHub Actions environment variables');
   }
 
-  const [jobs, cacheEntries, mainCommit, v4Ref] = await Promise.all([
-    allPages(
-      `/repos/${owner}/${repo}/actions/runs/${runId}/attempts/${attempt}/jobs`,
-      'jobs',
-      token
-    ),
-    allPages(`/repos/${owner}/${repo}/actions/caches`, 'actions_caches', token),
-    api('/repos/actions/setup-java/commits/main', token),
-    api('/repos/actions/setup-java/git/ref/tags/v4.8.0', token)
-  ]);
+  const rows = parseSamples(await readSampleFiles());
+  const analysis = analyze(rows);
+  if (analysis.pairs.length === 0) {
+    throw new Error('No complete ABBA samples were collected');
+  }
 
-  const rows = jobs
-    .map(job => {
-      const identity = parseFocusedJob(job.name);
-      if (!identity) return null;
-      const step = job.steps.find(item =>
-        item.name.startsWith('Setup Java')
-      );
-      return {
-        ...identity,
-        conclusion: job.conclusion,
-        setupSeconds: secondsBetween(step.started_at, step.completed_at)
-      };
-    })
-    .filter(Boolean)
-    .sort(
-      (a, b) =>
-        a.sample - b.sample || a.version.localeCompare(b.version)
-    );
+  const cacheEntries = await allPages(
+    `/repos/${owner}/${repo}/actions/caches`,
+    'actions_caches',
+    token
+  );
 
   const caches = [];
-  for (const [version, versionId] of [
-    ['v4', 'v4'],
-    ['main', 'main']
-  ]) {
-    const benchmarkId = `focused-${versionId}-${runId}`;
+  for (const arm of ['baseline', 'candidate']) {
+    const benchmarkId = `focused-${arm}-${runId}`;
     const expected = [
       {
         type: 'maven-dependencies',
-        key: `setup-java-Linux-x64-maven-${hashFilesSingle(
-          `${benchmarkId}\n`
-        )}`
-      }
-    ];
-    if (version === 'main') {
-      expected.push({
+        key: `setup-java-Linux-x64-maven-${hashFilesSingle(`${benchmarkId}\n`)}`
+      },
+      {
         type: 'maven-wrapper',
         key: `setup-java-Linux-x64-maven-wrapper-${hashFilesSingle(
           `wrapperVersion=focused\n# benchmark-id=${benchmarkId}\n`
         )}`
-      });
-    }
+      }
+    ];
     for (const item of expected) {
       const entry = cacheEntries.find(cache => cache.key === item.key);
-      if (!entry) throw new Error(`Expected cache not found: ${item.key}`);
+      // Only the dependency cache is guaranteed for every ref; a baseline that
+      // predates wrapper caching simply will not have that entry.
+      if (!entry) {
+        if (item.type === 'maven-dependencies') {
+          throw new Error(`Expected cache not found: ${item.key}`);
+        }
+        continue;
+      }
       caches.push({
-        version,
+        arm,
         type: item.type,
         id: entry.id,
         key: item.key,
@@ -212,30 +299,24 @@ export async function main(env = process.env) {
   const metadata = {
     repository: env.GITHUB_REPOSITORY,
     runId,
-    runAttempt: Number(attempt),
-    samples,
-    javaVersion,
-    setupJavaV4Ref: v4Ref.object.sha,
-    setupJavaMainRefAtReport: mainCommit.sha,
+    javaVersion: env.JAVA_VERSION,
+    setupJavaRepository,
+    baselineRef,
+    candidateRef,
     generatedAt: new Date().toISOString()
   };
-  const summaries = ['v4', 'main'].map(version =>
-    summarize(rows, version)
-  );
-  const report = markdown(metadata, rows, summaries, caches);
+  const report = markdown(metadata, analysis, caches);
 
   await mkdir('focused-results', {recursive: true});
   await writeFile(
     'focused-results/results.json',
-    `${JSON.stringify({metadata, summaries, rows, caches}, null, 2)}\n`
+    `${JSON.stringify({metadata, analysis, caches}, null, 2)}\n`
   );
   await writeFile(
     'focused-results/results.csv',
-    `version,sample,setup_seconds,conclusion\n${rows
+    `sample,arm,slot,seconds\n${rows
       .map(row =>
-        [row.version, row.sample, row.setupSeconds, row.conclusion]
-          .map(csvValue)
-          .join(',')
+        [row.sample, row.arm, row.slot, row.seconds].map(csvValue).join(',')
       )
       .join('\n')}\n`
   );

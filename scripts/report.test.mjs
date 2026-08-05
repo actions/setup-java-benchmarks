@@ -8,7 +8,6 @@ import {
   secondsBetween,
   sha256
 } from './report.mjs';
-import {parseFocusedJob} from './report-focused.mjs';
 
 test('hashes benchmark cache markers', () => {
   assert.equal(
@@ -72,16 +71,4 @@ test('parses benchmark job names', () => {
     iteration: 3
   });
   assert.equal(parseBenchmarkJob('Report'), null);
-});
-
-test('parses focused benchmark job names', () => {
-  assert.deepEqual(parseFocusedJob('main / warm / 10'), {
-    version: 'main',
-    sample: 10
-  });
-  assert.deepEqual(parseFocusedJob('v4 / warm / 2'), {
-    version: 'v4',
-    sample: 2
-  });
-  assert.equal(parseFocusedJob('Seed main caches'), null);
 });

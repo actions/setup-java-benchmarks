@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       samples:
-        description: Warm restore samples per version
+        description: Runners to measure on (each contributes 2 paired observations)
         required: true
         type: choice
         options:
@@ -13,6 +13,21 @@ on:
           - "10"
           - "20"
         default: "10"
+      setup-java-repository:
+        description: Repository containing the setup-java action
+        required: true
+        default: actions/setup-java
+        type: string
+      baseline-ref:
+        description: Git ref for the baseline arm
+        required: true
+        default: v4.8.0
+        type: string
+      candidate-ref:
+        description: Git ref for the candidate arm
+        required: true
+        default: main
+        type: string
       cleanup-caches:
         description: Delete benchmark caches after measuring them
         required: true
@@ -32,68 +47,72 @@ concurrency:
   group: focused-cache-restore
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  v4-seed:
-    name: Seed v4 cache
+  baseline-seed:
+    name: Seed baseline cache
     runs-on: ubuntu-24.04
     steps:
       - name: Check out benchmark repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Check out baseline setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: baseline
+          persist-credentials: false
+          ref: ${{ inputs.baseline-ref }}
       - name: Prepare cache identity
-        env:
-          BENCHMARK_ID: focused-v4-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .focused-cache-key
-          mkdir -p .mvn/wrapper
-          printf 'wrapperVersion=focused\n# benchmark-id=%s\n' "$BENCHMARK_ID" > .mvn/wrapper/maven-wrapper.properties
-      - name: Setup Java v4
-        uses: actions/setup-java@v4.8.0
+        run: bash scripts/focused-cache-restore.sh prepare "focused-baseline-${{ github.run_id }}"
+      - name: Setup Java baseline
+        uses: ./baseline
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
           cache-dependency-path: .focused-cache-key
       - name: Create synthetic cache fixtures
-        run: |
-          mkdir -p ~/.m2/repository/focused-benchmark
-          head -c "$((DEPENDENCY_FIXTURE_MIB * 1024 * 1024))" /dev/urandom > ~/.m2/repository/focused-benchmark/dependencies.bin &
-          wait
+        run: bash scripts/focused-cache-restore.sh seed-fixtures
 
-  main-seed:
-    name: Seed main caches
+  candidate-seed:
+    name: Seed candidate caches
     runs-on: ubuntu-24.04
     steps:
       - name: Check out benchmark repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Check out candidate setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: candidate
+          persist-credentials: false
+          ref: ${{ inputs.candidate-ref }}
       - name: Prepare cache identity
-        env:
-          BENCHMARK_ID: focused-main-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .focused-cache-key
-          mkdir -p .mvn/wrapper
-          printf 'wrapperVersion=focused\n# benchmark-id=%s\n' "$BENCHMARK_ID" > .mvn/wrapper/maven-wrapper.properties
-      - name: Setup Java main
-        uses: actions/setup-java@main
+        run: bash scripts/focused-cache-restore.sh prepare "focused-candidate-${{ github.run_id }}"
+      - name: Setup Java candidate
+        uses: ./candidate
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
           cache-dependency-path: .focused-cache-key
       - name: Create synthetic cache fixtures
-        run: |
-          mkdir -p ~/.m2/repository/focused-benchmark
-          mkdir -p ~/.m2/wrapper/dists/focused-benchmark
-          head -c "$((DEPENDENCY_FIXTURE_MIB * 1024 * 1024))" /dev/urandom > ~/.m2/repository/focused-benchmark/dependencies.bin &
-          head -c "$((WRAPPER_FIXTURE_MIB * 1024 * 1024))" /dev/urandom > ~/.m2/wrapper/dists/focused-benchmark/wrapper.bin &
-          wait
+        run: bash scripts/focused-cache-restore.sh seed-fixtures
 
-  v4-measure:
-    name: v4 / warm / ${{ matrix.sample }}
-    needs: v4-seed
+  # Both arms are measured inside the same job, in ABBA order. Sharing a runner
+  # removes the between-runner variance that otherwise swamps the effect, and
+  # the mirrored order cancels drift across the four slots. Measuring each arm
+  # twice per runner also yields a free A/A noise-floor estimate.
+  measure:
+    name: paired / ${{ matrix.sample }}
+    needs: [baseline-seed, candidate-seed]
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -104,59 +123,97 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Prepare cache identity
-        env:
-          BENCHMARK_ID: focused-v4-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .focused-cache-key
-          mkdir -p .mvn/wrapper
-          printf 'wrapperVersion=focused\n# benchmark-id=%s\n' "$BENCHMARK_ID" > .mvn/wrapper/maven-wrapper.properties
-      - name: Setup Java v4
-        uses: actions/setup-java@v4.8.0
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: maven
-          cache-dependency-path: .focused-cache-key
-      - name: Verify restored fixtures
-        run: |
-          test "$(wc -c < ~/.m2/repository/focused-benchmark/dependencies.bin)" -eq "$((DEPENDENCY_FIXTURE_MIB * 1024 * 1024))"
-
-  main-measure:
-    name: main / warm / ${{ matrix.sample }}
-    needs: main-seed
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        sample: ${{ fromJSON(inputs.samples == '20' && '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]' || inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
-    steps:
-      - name: Check out benchmark repository
+      - name: Check out baseline setup-java
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: baseline
           persist-credentials: false
-      - name: Prepare cache identity
-        env:
-          BENCHMARK_ID: focused-main-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .focused-cache-key
-          mkdir -p .mvn/wrapper
-          printf 'wrapperVersion=focused\n# benchmark-id=%s\n' "$BENCHMARK_ID" > .mvn/wrapper/maven-wrapper.properties
-      - name: Setup Java main
-        uses: actions/setup-java@main
+          ref: ${{ inputs.baseline-ref }}
+      - name: Check out candidate setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: candidate
+          persist-credentials: false
+          ref: ${{ inputs.candidate-ref }}
+
+      - name: Reset slot 1
+        run: bash scripts/focused-cache-restore.sh reset "focused-baseline-${{ github.run_id }}"
+      - name: Start slot 1 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 1 setup (baseline)
+        uses: ./baseline
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
           cache-dependency-path: .focused-cache-key
-      - name: Verify restored fixtures
-        run: |
-          test "$(wc -c < ~/.m2/repository/focused-benchmark/dependencies.bin)" -eq "$((DEPENDENCY_FIXTURE_MIB * 1024 * 1024))"
-          test "$(wc -c < ~/.m2/wrapper/dists/focused-benchmark/wrapper.bin)" -eq "$((WRAPPER_FIXTURE_MIB * 1024 * 1024))"
+      - name: Record slot 1
+        run: node scripts/measure.mjs record ".benchmark-results/focused-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 1
+      - name: Verify slot 1 fixtures
+        run: bash scripts/focused-cache-restore.sh verify baseline
+
+      - name: Reset slot 2
+        run: bash scripts/focused-cache-restore.sh reset "focused-candidate-${{ github.run_id }}"
+      - name: Start slot 2 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 2 setup (candidate)
+        uses: ./candidate
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: .focused-cache-key
+      - name: Record slot 2
+        run: node scripts/measure.mjs record ".benchmark-results/focused-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 2
+      - name: Verify slot 2 fixtures
+        run: bash scripts/focused-cache-restore.sh verify candidate
+
+      - name: Reset slot 3
+        run: bash scripts/focused-cache-restore.sh reset "focused-candidate-${{ github.run_id }}"
+      - name: Start slot 3 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 3 setup (candidate)
+        uses: ./candidate
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: .focused-cache-key
+      - name: Record slot 3
+        run: node scripts/measure.mjs record ".benchmark-results/focused-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 3
+      - name: Verify slot 3 fixtures
+        run: bash scripts/focused-cache-restore.sh verify candidate
+
+      - name: Reset slot 4
+        run: bash scripts/focused-cache-restore.sh reset "focused-baseline-${{ github.run_id }}"
+      - name: Start slot 4 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 4 setup (baseline)
+        uses: ./baseline
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: .focused-cache-key
+      - name: Record slot 4
+        run: node scripts/measure.mjs record ".benchmark-results/focused-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 4
+      - name: Verify slot 4 fixtures
+        run: bash scripts/focused-cache-restore.sh verify baseline
+
+      - name: Upload sample timings
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: focused-timings-${{ matrix.sample }}
+          path: .benchmark-results/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
 
   report:
     name: Report
-    needs: [v4-measure, main-measure]
+    needs: measure
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
@@ -164,10 +221,19 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Download sample timings
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: focused-timings-*
+          merge-multiple: true
+          path: .benchmark-results
       - name: Generate focused report
         env:
           GH_TOKEN: ${{ github.token }}
           SAMPLES: ${{ inputs.samples }}
+          BASELINE_REF: ${{ inputs.baseline-ref }}
+          CANDIDATE_REF: ${{ inputs.candidate-ref }}
+          SETUP_JAVA_REPOSITORY: ${{ inputs.setup-java-repository }}
           CLEANUP_CACHES: ${{ inputs.cleanup-caches }}
         run: node scripts/report-focused.mjs
       - name: Upload benchmark results
