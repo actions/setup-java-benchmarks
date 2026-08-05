@@ -58,7 +58,7 @@ export function summarizeJdkArm(rows, arm) {
     warmJobSeconds: median(warmRows.map(row => row.jobSeconds)),
     coldSetupSeconds: seed?.setupSeconds ?? null,
     coldPostSeconds: seed?.postSeconds ?? null,
-    estimatedBilledMinutes: armRows.reduce(
+    estimatedBilledMinutes: warmRows.reduce(
       (total, row) =>
         total +
         (row.jobSeconds === null ? 0 : Math.ceil(row.jobSeconds / 60)),
@@ -181,7 +181,7 @@ function markdown(metadata, rows, summaries, caches) {
 
   lines.push(
     '',
-    'The billed-minute estimate includes each arm seed and all measurement jobs, rounding every Ubuntu job up to a whole minute. It excludes the shared prepare and report jobs.',
+    'The billed-minute estimate covers only warm measurement jobs, rounding each Ubuntu job up to a whole minute. It excludes seeds because they are one-time setup and the treatment seed pays the JDK save, which would distort the steady-state comparison. It also excludes the shared prepare and report jobs.',
     '',
     '## Cache entries',
     '',
