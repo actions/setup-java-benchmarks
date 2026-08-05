@@ -15,6 +15,8 @@ Every workflow here measures effects of a few hundred milliseconds to a few seco
 
 **Same-runner pairing.** Between-runner variance cannot be averaged away by adding more independent jobs to each arm. Every arm is measured inside the *same* job, in an order mirrored about the middle of the job: ABBA for two arms, and `v1..main` followed by `main..v1` for the version sweep. Differencing within a runner removes the runner's own speed, and the mirrored order cancels drift that is linear across the job. Each measured slot deletes `~/.m2` first so every restore extracts into an empty tree.
 
+Every job also runs one unmeasured warm-up slot first. The first setup in a job pays costs the later ones do not — DNS resolution, TLS handshakes to the cache service and the JDK host, and a cold page cache — and that is a one-off spike rather than drift, so the mirrored order cannot cancel it. Without the warm-up slot the A/A control resolved a spurious 0.4 s difference between an arm's own first and last slot.
+
 **One cache, every arm.** A cache entry's download throughput depends on where the service placed the stored blob, and that placement is fixed for the life of the entry. Seeding one entry per arm therefore confounds the arm with its blob, and because the bias is identical on every runner, pairing cannot remove it and more samples only tighten the interval around the wrong answer. A single entry is seeded and every arm restores it.
 
 **Intervals, not point estimates.** `scripts/stats.mjs` reports a bootstrap 95% confidence interval, a permutation p-value, and a Hodges-Lehmann shift, and turns them into an explicit verdict. A comparison whose interval includes zero is reported as `inconclusive` rather than as a number that looks like a result.

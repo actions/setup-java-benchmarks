@@ -148,6 +148,22 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.candidate-ref }}
 
+      # The first setup in a job pays costs the later ones do not: DNS resolution,
+      # TLS handshakes to the cache service and the JDK host, and a cold page
+      # cache. That is a one-off spike rather than drift, so the mirrored slot
+      # order cannot cancel it, and it showed up as the A/A control resolving a
+      # difference between an arm's own first and last slot. This slot pays those
+      # costs and is discarded.
+      - name: Reset warm-up slot
+        run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
+      - name: Warm-up setup (discarded)
+        uses: ./baseline
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: .focused-cache-key
+
       - name: Reset slot 1
         run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
       - name: Start slot 1 timer

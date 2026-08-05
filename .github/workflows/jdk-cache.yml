@@ -178,6 +178,24 @@ jobs:
       # Each slot deletes the extracted JDK and the local repository first, so
       # every measured setup starts from the same empty state instead of
       # extracting over files an earlier slot left behind.
+      # The first setup in a job pays costs the later ones do not: DNS resolution,
+      # TLS handshakes to the cache service and the JDK host, and a cold page
+      # cache. That is a one-off spike rather than drift, so the mirrored slot
+      # order cannot cancel it, and it showed up as the A/A control resolving a
+      # difference between an arm's own first and last slot. This slot pays those
+      # costs and is discarded.
+      - name: Reset warm-up slot
+        run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
+      - name: Warm-up setup (discarded)
+        uses: ./.setup-java
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-jdk: false
+          cache-read-only: true
+          cache-dependency-path: .jdk-cache-key
+
       - name: Reset slot 1
         run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
       - name: Start slot 1 timer
