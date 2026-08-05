@@ -11,15 +11,22 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
-function input(name, { required = false } = {}) {
-  const value =
-    process.env[`INPUT_${name.toUpperCase().replaceAll("-", "_")}`] ?? "";
-  const trimmed = value.trim();
-  if (required && trimmed === "") {
+// The runner uppercases an input name and replaces spaces with underscores, but
+// leaves hyphens alone, so `arm-directory` arrives as `INPUT_ARM-DIRECTORY`.
+// Normalising hyphens the way a shell variable would made every input read as
+// missing while the runner log showed them being passed correctly.
+export function envKey(name) {
+  return `INPUT_${name.replaceAll(" ", "_").toUpperCase()}`;
+}
+
+export function input(name, env = process.env, { required = false } = {}) {
+  const value = (env[envKey(name)] ?? "").trim();
+  if (required && value === "") {
     throw new Error(`Input \`${name}\` is required`);
   }
-  return trimmed;
+  return value;
 }
 
 // `@actions/cache` publishes an `exports` map with no "." entry, so requiring it
@@ -62,9 +69,11 @@ function record(resultsFile, fields, elapsedMs) {
 }
 
 async function main() {
-  const armDirectory = input("arm-directory", { required: true });
-  const fixtureDirectory = input("fixture-directory", { required: true });
-  const key = input("key", { required: true });
+  const armDirectory = input("arm-directory", process.env, { required: true });
+  const fixtureDirectory = input("fixture-directory", process.env, {
+    required: true,
+  });
+  const key = input("key", process.env, { required: true });
   const resultsFile = input("results-file");
 
   const cache = loadCacheClient(armDirectory);
@@ -93,7 +102,12 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(`::error::${error.message}`);
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  main().catch((error) => {
+    console.error(`::error::${error.message}`);
+    process.exitCode = 1;
+  });
+}
