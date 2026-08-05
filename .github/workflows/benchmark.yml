@@ -143,8 +143,9 @@ jobs:
       # Every runner pulls the same seeded blob, so running the whole matrix at
       # once measures contention on the cache service that no real workflow would
       # see. Waves are kept small so each measurement reflects an ordinary
-      # restore.
-      max-parallel: 4
+      # restore. This job restores fifteen times where the two-arm workflows
+      # restore five, so it runs in narrower waves than they do.
+      max-parallel: 2
       matrix:
         sample: ${{ fromJSON(inputs.samples == '20' && '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]' || inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
     steps:
@@ -177,6 +178,12 @@ jobs:
       - name: Reset warm-up slot
         run: bash scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
       - name: Warm-up setup (discarded)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@main
         with:
           distribution: ${{ inputs.distribution }}
@@ -189,6 +196,12 @@ jobs:
       - name: Start slot 1 timer
         run: node scripts/measure.mjs start
       - name: Slot 1 setup (v1)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v1.4.4
         with:
           java-version: ${{ inputs.java-version }}
@@ -199,6 +212,12 @@ jobs:
       - name: Start slot 2 timer
         run: node scripts/measure.mjs start
       - name: Slot 2 setup (v2)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v2.5.1
         with:
           distribution: ${{ inputs.distribution }}
@@ -210,6 +229,12 @@ jobs:
       - name: Start slot 3 timer
         run: node scripts/measure.mjs start
       - name: Slot 3 setup (v3)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v3.14.1
         with:
           distribution: ${{ inputs.distribution }}
@@ -222,6 +247,12 @@ jobs:
       - name: Start slot 4 timer
         run: node scripts/measure.mjs start
       - name: Slot 4 setup (v4)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v4.8.0
         with:
           distribution: ${{ inputs.distribution }}
@@ -235,6 +266,12 @@ jobs:
       - name: Start slot 5 timer
         run: node scripts/measure.mjs start
       - name: Slot 5 setup (v5.2)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v5.2.0
         with:
           distribution: ${{ inputs.distribution }}
@@ -248,6 +285,12 @@ jobs:
       - name: Start slot 6 timer
         run: node scripts/measure.mjs start
       - name: Slot 6 setup (v5.6)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v5.6.0
         with:
           distribution: ${{ inputs.distribution }}
@@ -261,6 +304,12 @@ jobs:
       - name: Start slot 7 timer
         run: node scripts/measure.mjs start
       - name: Slot 7 setup (main)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@main
         with:
           distribution: ${{ inputs.distribution }}
@@ -274,6 +323,12 @@ jobs:
       - name: Start slot 8 timer
         run: node scripts/measure.mjs start
       - name: Slot 8 setup (main)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@main
         with:
           distribution: ${{ inputs.distribution }}
@@ -287,6 +342,12 @@ jobs:
       - name: Start slot 9 timer
         run: node scripts/measure.mjs start
       - name: Slot 9 setup (v5.6)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v5.6.0
         with:
           distribution: ${{ inputs.distribution }}
@@ -300,6 +361,12 @@ jobs:
       - name: Start slot 10 timer
         run: node scripts/measure.mjs start
       - name: Slot 10 setup (v5.2)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v5.2.0
         with:
           distribution: ${{ inputs.distribution }}
@@ -313,6 +380,12 @@ jobs:
       - name: Start slot 11 timer
         run: node scripts/measure.mjs start
       - name: Slot 11 setup (v4)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v4.8.0
         with:
           distribution: ${{ inputs.distribution }}
@@ -326,6 +399,12 @@ jobs:
       - name: Start slot 12 timer
         run: node scripts/measure.mjs start
       - name: Slot 12 setup (v3)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v3.14.1
         with:
           distribution: ${{ inputs.distribution }}
@@ -338,6 +417,12 @@ jobs:
       - name: Start slot 13 timer
         run: node scripts/measure.mjs start
       - name: Slot 13 setup (v2)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v2.5.1
         with:
           distribution: ${{ inputs.distribution }}
@@ -349,6 +434,12 @@ jobs:
       - name: Start slot 14 timer
         run: node scripts/measure.mjs start
       - name: Slot 14 setup (v1)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: actions/setup-java@v1.4.4
         with:
           java-version: ${{ inputs.java-version }}

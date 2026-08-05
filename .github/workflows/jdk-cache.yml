@@ -187,6 +187,12 @@ jobs:
       - name: Reset warm-up slot
         run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
       - name: Warm-up setup (discarded)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
@@ -201,6 +207,12 @@ jobs:
       - name: Start slot 1 timer
         run: node scripts/measure.mjs start
       - name: Slot 1 setup (baseline, no JDK cache)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
@@ -217,6 +229,12 @@ jobs:
       - name: Start slot 2 timer
         run: node scripts/measure.mjs start
       - name: Slot 2 setup (candidate, JDK cache)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
@@ -233,6 +251,12 @@ jobs:
       - name: Start slot 3 timer
         run: node scripts/measure.mjs start
       - name: Slot 3 setup (candidate, JDK cache)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
@@ -249,6 +273,12 @@ jobs:
       - name: Start slot 4 timer
         run: node scripts/measure.mjs start
       - name: Slot 4 setup (baseline, no JDK cache)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}

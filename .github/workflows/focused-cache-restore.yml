@@ -157,6 +157,12 @@ jobs:
       - name: Reset warm-up slot
         run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
       - name: Warm-up setup (discarded)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: ./baseline
         with:
           distribution: temurin
@@ -169,6 +175,12 @@ jobs:
       - name: Start slot 1 timer
         run: node scripts/measure.mjs start
       - name: Slot 1 setup (baseline)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: ./baseline
         with:
           distribution: temurin
@@ -185,6 +197,12 @@ jobs:
       - name: Start slot 2 timer
         run: node scripts/measure.mjs start
       - name: Slot 2 setup (candidate)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: ./candidate
         with:
           distribution: temurin
@@ -201,6 +219,12 @@ jobs:
       - name: Start slot 3 timer
         run: node scripts/measure.mjs start
       - name: Slot 3 setup (candidate)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: ./candidate
         with:
           distribution: temurin
@@ -217,6 +241,12 @@ jobs:
       - name: Start slot 4 timer
         run: node scripts/measure.mjs start
       - name: Slot 4 setup (baseline)
+        # A restore that has not finished in three minutes has stalled on the
+        # cache service rather than being slow: its neighbours in the same job
+        # take a few seconds. Failing here costs one runner, which the report
+        # discards along with the other incomplete ones, instead of letting the
+        # job sit until its own timeout.
+        timeout-minutes: 3
         uses: ./baseline
         with:
           distribution: temurin
