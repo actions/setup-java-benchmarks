@@ -20,7 +20,6 @@ on:
         options:
           - corretto
           - dragonwell
-          - graalvm
           - graalvm-community
           - jetbrains
           - kona
