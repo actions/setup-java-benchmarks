@@ -81,7 +81,7 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ matrix.versions.java-version }}
-          cache: ${{ matrix.cache == 'none' && '' || matrix.cache }}
+          cache: ${{ matrix.cache != 'none' && matrix.cache || '' }}
           cache-dependency-path: benchmark/${{ matrix.cache == 'gradle' && 'build.gradle' || 'pom.xml' }}
           settings-path: benchmark-maven-home
       - name: Record baseline iteration 1
@@ -96,7 +96,7 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ matrix.versions.java-version }}
-          cache: ${{ matrix.cache == 'none' && '' || matrix.cache }}
+          cache: ${{ matrix.cache != 'none' && matrix.cache || '' }}
           cache-dependency-path: benchmark/${{ matrix.cache == 'gradle' && 'build.gradle' || 'pom.xml' }}
           settings-path: benchmark-maven-home
       - name: Record candidate iteration 1
@@ -111,7 +111,7 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ matrix.versions.java-version }}
-          cache: ${{ matrix.cache == 'none' && '' || matrix.cache }}
+          cache: ${{ matrix.cache != 'none' && matrix.cache || '' }}
           cache-dependency-path: benchmark/${{ matrix.cache == 'gradle' && 'build.gradle' || 'pom.xml' }}
           settings-path: benchmark-maven-home
       - name: Record baseline iteration 2
@@ -126,7 +126,7 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ matrix.versions.java-version }}
-          cache: ${{ matrix.cache == 'none' && '' || matrix.cache }}
+          cache: ${{ matrix.cache != 'none' && matrix.cache || '' }}
           cache-dependency-path: benchmark/${{ matrix.cache == 'gradle' && 'build.gradle' || 'pom.xml' }}
           settings-path: benchmark-maven-home
       - name: Record candidate iteration 2
@@ -141,7 +141,7 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ matrix.versions.java-version }}
-          cache: ${{ matrix.cache == 'none' && '' || matrix.cache }}
+          cache: ${{ matrix.cache != 'none' && matrix.cache || '' }}
           cache-dependency-path: benchmark/${{ matrix.cache == 'gradle' && 'build.gradle' || 'pom.xml' }}
           settings-path: benchmark-maven-home
       - name: Record baseline iteration 3
@@ -156,7 +156,7 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ matrix.versions.java-version }}
-          cache: ${{ matrix.cache == 'none' && '' || matrix.cache }}
+          cache: ${{ matrix.cache != 'none' && matrix.cache || '' }}
           cache-dependency-path: benchmark/${{ matrix.cache == 'gradle' && 'build.gradle' || 'pom.xml' }}
           settings-path: benchmark-maven-home
       - name: Record candidate iteration 3
@@ -169,5 +169,6 @@ jobs:
         with:
           name: maven-config-${{ matrix.os }}-${{ matrix.cache }}-${{ matrix.versions.name }}-${{ matrix.toolchains }}
           path: .benchmark-results/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
