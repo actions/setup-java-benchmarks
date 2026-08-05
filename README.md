@@ -169,7 +169,9 @@ Network throughput, hosted-runner image changes, upstream artifact availability 
 ## Local checks
 
 ```bash
-npm test
+npm test          # unit tests, plus a syntax check of the JS embedded in heredocs
 bash -n scripts/*.sh
 shellcheck scripts/*.sh
 ```
+
+`npm test` includes `scripts/check-embedded-node.mjs` because several helpers run node inline through a heredoc, and that code is a string to everything else here: prettier does not format it, `node --test` never imports it, and shellcheck sees an opaque block. A syntax error in one of them otherwise stays invisible until a runner reaches it, which costs a whole benchmark run to find out.
