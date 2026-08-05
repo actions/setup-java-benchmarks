@@ -6,9 +6,11 @@
 // straight from the repository, so it may only use node built-ins. Inputs are
 // read from `INPUT_*` rather than through `@actions/core` for the same reason.
 
-const { appendFileSync, mkdirSync, readFileSync } = require("node:fs");
-const { dirname, isAbsolute, join, resolve } = require("node:path");
-const { createRequire } = require("node:module");
+// ESM, because the repository root declares `"type": "module"` and this file is
+// run straight from the checkout rather than bundled.
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { createRequire } from "node:module";
 
 function input(name, { required = false } = {}) {
   const value =
