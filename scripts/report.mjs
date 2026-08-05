@@ -52,7 +52,9 @@ export const VERSIONS = [
     arm: "v4",
     label: "v4.9.1",
     caching: "cache-dependency-path",
-    comparable: true,
+    comparable: false,
+    reason:
+      "computes a different Maven cache key from `main` for the same tree in the pairwise restore harness, so it cannot restore the same stored cache entry; timing it against `main` is confounded with cache-entry placement and misses",
   },
   {
     arm: "v52",

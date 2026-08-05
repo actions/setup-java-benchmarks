@@ -21,10 +21,10 @@ on:
       baseline-ref:
         description: Git ref for the baseline arm
         required: true
-        # The three releases worth comparing main against: the newest release,
-        # the one before the v5 cache work settled, and the last v4. Anything
-        # older restores its own cache entry or is rejected by the cache service
-        # outright, which confounds the comparison rather than extending it.
+        # Cache save does not require the two refs to restore one shared entry;
+        # every slot must write a fresh key anyway because saving an existing key
+        # is a no-op. v4.9.1 therefore remains meaningful here even though the
+        # restore-based pairwise workflows cannot offer it.
         type: choice
         options:
           - v5.6.0
@@ -54,7 +54,11 @@ env:
   CACHE_KEY_PREFIX: cache-save-${{ github.run_id }}-
 
 concurrency:
-  group: cache-save
+  # GitHub keeps only one running and one pending run per concurrency group. A
+  # fixed group silently cancelled the middle baseline when the three comparison
+  # runs were dispatched together, so the comparison identity has to be part of
+  # the group.
+  group: cache-save-${{ inputs.baseline-ref }}-${{ inputs.candidate-ref }}-${{ inputs.fixture-mib }}
   cancel-in-progress: false
 
 defaults:

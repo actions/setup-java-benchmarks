@@ -1,10 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import {
-  envKey,
-  input,
-} from "../.github/actions/cache-save-slot/index.js";
+import { envKey, input } from "../.github/actions/cache-save-slot/index.js";
 
 // The first live run of the local action failed every slot with "Input
 // `arm-directory` is required" while the runner log showed the inputs being
@@ -31,7 +28,10 @@ test("input returns empty string for an absent optional value", () => {
 });
 
 test("input rejects an absent or blank required value", () => {
-  assert.throws(() => input("key", {}, { required: true }), /`key` is required/);
+  assert.throws(
+    () => input("key", {}, { required: true }),
+    /`key` is required/,
+  );
   assert.throws(
     () => input("key", { INPUT_KEY: "   " }, { required: true }),
     /`key` is required/,

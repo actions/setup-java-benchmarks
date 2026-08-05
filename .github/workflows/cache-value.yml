@@ -46,7 +46,7 @@ env:
   PETCLINIC_REF: f182358d02e4a68e52bdbabf55ca7800288511e7
 
 concurrency:
-  group: cache-value
+  group: cache-value-${{ inputs.setup-java-ref }}
   cancel-in-progress: false
 
 defaults:

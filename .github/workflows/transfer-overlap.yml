@@ -21,15 +21,15 @@ on:
       baseline-ref:
         description: Git ref for the baseline arm
         required: true
-        # The three releases worth comparing main against: the newest release,
-        # the one before the v5 cache work settled, and the last v4. Anything
-        # older restores its own cache entry or is rejected by the cache service
-        # outright, which confounds the comparison rather than extending it.
+        # Restore-based comparisons require both refs to compute the same cache
+        # key for the same tree, otherwise the candidate is measured on a miss
+        # while the baseline restores the seeded entry. v4.9.1 does not share a
+        # key with main for this fixture, so it is intentionally not offered
+        # here; see actions/setup-java-benchmarks#25.
         type: choice
         options:
           - v5.6.0
           - v5.2.0
-          - v4.9.1
         default: v5.6.0
       candidate-ref:
         description: Git ref for the candidate arm
@@ -75,7 +75,11 @@ env:
   WRAPPER_FIXTURE_MIB: "9"
 
 concurrency:
-  group: transfer-overlap
+  # GitHub keeps only one running and one pending run per concurrency group. A
+  # fixed group silently cancelled the middle baseline when the three comparison
+  # runs were dispatched together, so the comparison identity has to be part of
+  # the group.
+  group: transfer-overlap-${{ inputs.baseline-ref }}-${{ inputs.candidate-ref }}
   cancel-in-progress: false
 
 defaults:
