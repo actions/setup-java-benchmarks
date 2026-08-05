@@ -7,6 +7,7 @@ import {
   createRandom,
   differenceInterval,
   formatInterval,
+  holmAdjust,
   hodgesLehmann,
   mean,
   median,
@@ -149,4 +150,9 @@ test("formatInterval labels the interval's own confidence level", () => {
     formatInterval({ estimate: 0, low: -1, high: 1 }),
     "0.0s (95% CI -1.0 to 1.0)",
   );
+});
+
+test("Holm adjustment controls a family of p-values", () => {
+  assert.deepEqual(holmAdjust([0.01, 0.04, 0.2]), [0.03, 0.08, 0.2]);
+  assert.deepEqual(holmAdjust([null, 0.01, 0.2]), [null, 0.02, 0.2]);
 });

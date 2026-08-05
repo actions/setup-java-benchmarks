@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { analyzeAgainstReference, parseSamples } from "./paired.mjs";
-import { VERSIONS, hashFilesSingle, markdown, sha256 } from "./report.mjs";
+import {
+  COHORTS,
+  VERSIONS,
+  hashFilesSingle,
+  markdown,
+  sha256,
+} from "./report.mjs";
 
 const ARMS = VERSIONS.map((entry) => entry.arm);
 const ORDER = [...ARMS, ...[...ARMS].reverse()];
@@ -91,20 +97,33 @@ test("renders a version table, a control and per-runner medians", () => {
     .map((sample) => sweep(sample, 1 + sample * 0.1, flat))
     .join("\n");
   const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
+  analysis.rawRows = parseSamples(csv);
   const report = markdown(
     { runId: "1", distribution: "temurin", javaVersion: "17" },
     analysis,
     [{ key: "setup-java-Linux-x64-maven-abc", sizeBytes: 60 * 1024 * 1024 }],
   );
   assert.match(report, /# setup-java version sweep/);
+  assert.match(report, /## Comparable cohorts/);
+  assert.match(report, /### Dependency cache/);
   assert.match(report, /\| v4\.8\.0 \|/);
+  assert.match(report, /Holm-adjusted p/);
   assert.match(report, /A\/A control/);
   assert.match(report, /Harness noise floor/);
   assert.match(report, /## Per-runner medians/);
-  // v1 and v2 skip the dependency restore entirely, so ranking them against
-  // main would compare different amounts of work.
-  assert.match(report, /not comparable \(no caching\)/);
+  assert.match(report, /v1 and v2 do not restore Maven dependencies/);
   assert.match(report, /setup-java-Linux-x64-maven-abc/);
+});
+
+test("defines cohorts with only comparable cache contracts", () => {
+  assert.deepEqual(
+    COHORTS.map((cohort) => cohort.arms),
+    [
+      ["v1", "v2"],
+      ["v3", "v4", "v52"],
+      ["v56", "main"],
+    ],
+  );
 });
 
 test("discards a runner whose slots for one version disagree", () => {

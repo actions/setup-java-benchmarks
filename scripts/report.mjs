@@ -8,7 +8,7 @@ import {
   readSampleFiles,
   requireEnv,
 } from "./paired.mjs";
-import { describeVerdict, formatInterval } from "./stats.mjs";
+import { classify, formatInterval, holmAdjust } from "./stats.mjs";
 
 const API_VERSION = "2022-11-28";
 const RESULTS_DIR = "results";
@@ -28,6 +28,59 @@ export const VERSIONS = [
 ];
 
 const LABELS = new Map(VERSIONS.map((entry) => [entry.arm, entry.label]));
+
+export const COHORTS = [
+  {
+    id: "uncached",
+    label: "Uncached setup",
+    arms: ["v1", "v2"],
+    reference: "v2",
+    note: "v1 and v2 do not restore Maven dependencies, so this comparison is not comparable with cached versions.",
+  },
+  {
+    id: "dependency-cache",
+    label: "Dependency cache",
+    arms: ["v3", "v4", "v52"],
+    reference: "v52",
+    note: "v3 uses its older pom.xml cache-key strategy; compare it with caution. v4 and v5.2 share the controlled cache key.",
+  },
+  {
+    id: "wrapper-cache",
+    label: "Dependency plus wrapper cache",
+    arms: ["v56", "main"],
+    reference: "main",
+    note: "Both versions restore the dependency and Maven Wrapper caches.",
+  },
+];
+
+function analyzeCohort(rows, cohort) {
+  return analyzeAgainstReference(
+    rows.filter((row) => cohort.arms.includes(row.arm)),
+    cohort.arms,
+    cohort.reference,
+  );
+}
+
+function correctCohort(analysis) {
+  const adjusted = holmAdjust(
+    analysis.comparisons.map((comparison) =>
+      comparison.isReference ? null : comparison.pValue,
+    ),
+  );
+  return {
+    ...analysis,
+    comparisons: analysis.comparisons.map((comparison, index) => ({
+      ...comparison,
+      adjustedPValue: adjusted[index],
+      verdict: comparison.isReference
+        ? "reference"
+        : classify(comparison.interval, {
+            noiseFloor: analysis.noiseFloorSeconds,
+            pValue: adjusted[index],
+          }),
+    })),
+  };
+}
 
 export function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -87,39 +140,48 @@ export function markdown(metadata, analysis, caches) {
     "",
     `Durations are the warm restore path with a Maven cache already populated, measured inside the job at millisecond resolution. Differences are against \`${REFERENCE}\`.`,
     "",
-    "## Versions",
+    "## Comparable cohorts",
     "",
-    `| Version | Caching | Median (s) | Mean (s) | MAD (s) | vs ${REFERENCE} (s) | 95% CI | p | Verdict |`,
-    "| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | --- |",
+    "The versions have different setup contracts, so they are compared only within behaviorally comparable cohorts. Holm correction controls the family-wise error rate within each cohort. Cross-cohort timings are descriptive and must not be used to rank versions.",
   ];
-  for (const comparison of analysis.comparisons) {
-    const entry = VERSIONS.find((item) => item.arm === comparison.arm);
-    const summary = comparison.summary;
-    const diff = comparison.isReference
-      ? "reference"
-      : comparison.differenceSeconds.toFixed(3);
-    const ci = comparison.interval
-      ? `${comparison.interval.low.toFixed(3)} to ${comparison.interval.high.toFixed(3)}`
-      : "n/a";
-    const p = comparison.pValue === null ? "n/a" : comparison.pValue.toFixed(3);
-    // v1 and v2 do no caching, so they never restore the Maven repository the
-    // other versions spend most of their time on. Their difference is real but
-    // it is a difference in work done, not in how well the same work is done,
-    // and calling it an improvement or a regression would invite the wrong
-    // conclusion.
-    const verdict =
-      entry.caching === "none"
-        ? "not comparable (no caching)"
-        : comparison.verdict;
+  const rawRows = analysis.rawRows ?? [];
+  for (const cohort of COHORTS) {
+    const cohortResult = correctCohort(analyzeCohort(rawRows, cohort));
     lines.push(
-      `| ${LABELS.get(comparison.arm)} | ${entry.caching} | ${summary.medianSeconds.toFixed(3)} | ${summary.meanSeconds.toFixed(3)} | ${summary.madSeconds.toFixed(3)} | ${diff} | ${ci} | ${p} | ${verdict} |`,
+      "",
+      `### ${cohort.label}`,
+      "",
+      cohort.note,
+      "",
+      `| Version | Median (s) | Mean (s) | MAD (s) | vs ${LABELS.get(cohort.reference)} (s) | 95% CI | Holm-adjusted p | Verdict |`,
+      "| --- | ---: | ---: | ---: | ---: | --- | ---: | --- |",
+    );
+    for (const comparison of cohortResult.comparisons) {
+      const summary = comparison.summary;
+      const diff = comparison.isReference
+        ? "reference"
+        : comparison.differenceSeconds.toFixed(3);
+      const ci = comparison.interval
+        ? `${comparison.interval.low.toFixed(3)} to ${comparison.interval.high.toFixed(3)}`
+        : "n/a";
+      const p =
+        comparison.adjustedPValue === null
+          ? "n/a"
+          : comparison.adjustedPValue.toFixed(3);
+      lines.push(
+        `| ${LABELS.get(comparison.arm)} | ${summary.medianSeconds.toFixed(3)} | ${summary.meanSeconds.toFixed(3)} | ${summary.madSeconds.toFixed(3)} | ${diff} | ${ci} | ${p} | ${comparison.verdict} |`,
+      );
+    }
+    lines.push(
+      "",
+      `A/A control (${LABELS.get(cohort.reference)} against itself): **${cohortResult.control.verdict}**${cohortResult.control.interval ? ` at ${formatInterval(cohortResult.control.interval)}` : ""}.`,
     );
   }
   lines.push(
     "",
     `Harness noise floor: ${analysis.noiseFloorSeconds.toFixed(3)}s (median spread between a version's own two slots on one runner). A difference smaller than this is reported as \`within-noise\`; one whose interval includes zero is reported as \`inconclusive\` rather than as a number that looks like a result.`,
     "",
-    `A/A control (\`${REFERENCE}\` against itself) reports **${control.verdict}**${control.interval ? ` at ${formatInterval(control.interval)}` : ""}. A healthy harness reports \`within-noise\` or \`inconclusive\` here; anything else means slot ordering is biasing results and the table above cannot be trusted.`,
+    `A/A control (\`${REFERENCE}\` against itself) reports **${control.verdict}**${control.interval ? ` at ${formatInterval(control.interval)}` : ""}. A healthy harness reports \`within-noise\` or \`inconclusive\` here; anything else means slot ordering is biasing results and the cohort tables above cannot be trusted.`,
     "",
     analysis.droppedRunners.length === 0
       ? "No runner was discarded for a stalled slot."
@@ -183,6 +245,7 @@ export async function main(env = process.env) {
   if (analysis.runners.length === 0) {
     throw new Error("No runner measured every version twice");
   }
+  analysis.rawRows = rows;
 
   const cacheEntries = await allPages(
     `/repos/${owner}/${repo}/actions/caches`,
@@ -209,7 +272,7 @@ export async function main(env = process.env) {
   await mkdir(RESULTS_DIR, { recursive: true });
   await writeFile(
     `${RESULTS_DIR}/results.json`,
-    `${JSON.stringify({ metadata, analysis: { ...analysis, runners: undefined }, caches }, null, 2)}\n`,
+    `${JSON.stringify({ metadata, analysis: { ...analysis, rawRows: undefined, runners: undefined }, caches }, null, 2)}\n`,
   );
   await writeFile(
     `${RESULTS_DIR}/results.csv`,

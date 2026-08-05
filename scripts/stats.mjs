@@ -168,6 +168,22 @@ export function pairedPermutationTest(differences, options = {}) {
   return (atLeastAsExtreme + 1) / (iterations + 1);
 }
 
+// Holm's step-down correction controls the family-wise error rate when one
+// report makes several comparisons against the same reference.
+export function holmAdjust(pValues) {
+  const adjusted = new Array(pValues.length).fill(null);
+  const ordered = pValues
+    .map((pValue, index) => ({ pValue, index }))
+    .filter(({ pValue }) => pValue !== null)
+    .sort((a, b) => a.pValue - b.pValue);
+  let maximum = 0;
+  ordered.forEach(({ pValue, index }, rank) => {
+    maximum = Math.max(maximum, Math.min(1, pValue * (ordered.length - rank)));
+    adjusted[index] = maximum;
+  });
+  return adjusted;
+}
+
 // Hodges-Lehmann shift estimate: the median of all pairwise differences. More
 // robust than a difference of medians when samples are small and quantized.
 export function hodgesLehmann(treatment, baseline) {
