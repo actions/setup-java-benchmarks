@@ -7,7 +7,7 @@ import {
   markdown,
   noiseFloor,
   parseSamples,
-} from "./report-focused.mjs";
+} from "./report-transfer-overlap.mjs";
 
 const csv = [
   '"1","baseline","1","2400"',
@@ -90,7 +90,7 @@ test("renders a report with a verdict and paired samples", () => {
     analysis,
     [{ arm: "baseline", type: "maven-dependencies", sizeBytes: 1024 * 1024 }],
   );
-  assert.match(report, /# Focused cache restore benchmark/);
+  assert.match(report, /# Transfer overlap benchmark/);
   assert.match(report, /## Verdict/);
   assert.match(report, /95% CI/);
   assert.match(report, /A\/A control/);

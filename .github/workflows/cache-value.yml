@@ -1,0 +1,270 @@
+name: Cache value
+
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: Runners to measure on (each contributes 2 paired observations)
+        required: true
+        type: choice
+        options:
+          - "2"
+          - "6"
+          - "10"
+        default: "6"
+      setup-java-repository:
+        description: Repository containing the setup-java action
+        required: true
+        default: actions/setup-java
+        type: string
+      setup-java-ref:
+        description: Git ref of setup-java to measure
+        required: true
+        default: main
+        type: string
+      java-version:
+        description: Java feature version
+        required: true
+        default: "17"
+        type: string
+      cleanup-caches:
+        description: Delete benchmark caches after measuring them
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 2
+  PETCLINIC_REF: f182358d02e4a68e52bdbabf55ca7800288511e7
+
+concurrency:
+  group: cache-value
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+# What does the Maven cache actually save?
+#
+# Every other benchmark in this repository compares implementations of the cache
+# with each other, and measures differences of tens or hundreds of milliseconds.
+# None of them measures the thing the cache exists to do. This one does: both
+# arms resolve the same dependency tree with the same command, and differ only
+# in whether setup-java restored the local repository first.
+#
+# The effect here is tens of seconds rather than tens of milliseconds, so it does
+# not need the statistical machinery the other workflows need to see their
+# effects. It is reported with the same intervals anyway, because a number
+# without one invites the reader to compare it with a number from another run.
+jobs:
+  seed:
+    name: Seed cache
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          path: petclinic
+          persist-credentials: false
+      - name: Check out setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: setup-java
+          persist-credentials: false
+          ref: ${{ inputs.setup-java-ref }}
+      - name: Prepare cache identity
+        run: bash scripts/cache-value.sh prepare "cache-value-${{ github.run_id }}"
+      - name: Setup Java
+        uses: ./setup-java
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .cache-value-key
+      # Resolving rather than compiling: the measured arms resolve too, so the
+      # seeded repository has to contain exactly what a resolve needs. Compiling
+      # would additionally pull the plugins a compile needs and store a cache the
+      # measured slots never fully use.
+      - name: Resolve dependencies
+        run: bash scripts/cache-value.sh resolve
+
+  measure:
+    name: paired / ${{ matrix.sample }}
+    needs: seed
+    runs-on: ubuntu-24.04
+    # The uncached arm downloads PetClinic's whole dependency tree from Maven
+    # Central twice per runner, which is the slowest thing this repository does.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      # Kept small for Maven Central rather than for the cache service: twenty
+      # runners resolving the same tree at once would measure how Central treats
+      # a burst from one IP range, which is not the quantity under test.
+      max-parallel: 3
+      matrix:
+        sample: ${{ fromJSON(inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          path: petclinic
+          persist-credentials: false
+      - name: Check out setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: setup-java
+          persist-credentials: false
+          ref: ${{ inputs.setup-java-ref }}
+
+      # The first setup in a job pays DNS resolution, TLS handshakes and a cold
+      # page cache. That is a one-off spike rather than drift, so the mirrored
+      # slot order cannot cancel it. This slot pays those costs and is discarded.
+      - name: Reset warm-up slot
+        run: bash scripts/cache-value.sh reset "cache-value-${{ github.run_id }}"
+      - name: Warm-up setup (discarded)
+        timeout-minutes: 5
+        uses: ./setup-java
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .cache-value-key
+
+      # ABBA across the four measured slots: sharing a runner removes the
+      # between-runner variance, and the mirrored order cancels drift across the
+      # job. Measuring each arm twice also yields a free A/A noise floor.
+      - name: Reset slot 1
+        run: bash scripts/cache-value.sh reset "cache-value-${{ github.run_id }}"
+      - name: Start slot 1 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 1 setup (cached)
+        id: setup_1
+        timeout-minutes: 5
+        uses: ./setup-java
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .cache-value-key
+      - name: Slot 1 resolve
+        run: bash scripts/cache-value.sh resolve
+      - name: Record slot 1
+        run: node scripts/measure.mjs record ".benchmark-results/cache-value-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" cached 1
+      - name: Verify slot 1
+        run: bash scripts/cache-value.sh verify cached "${{ steps.setup_1.outputs.cache-hit }}"
+
+      - name: Reset slot 2
+        run: bash scripts/cache-value.sh reset "cache-value-${{ github.run_id }}"
+      - name: Start slot 2 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 2 setup (uncached)
+        id: setup_2
+        timeout-minutes: 5
+        uses: ./setup-java
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+      - name: Slot 2 resolve
+        run: bash scripts/cache-value.sh resolve
+      - name: Record slot 2
+        run: node scripts/measure.mjs record ".benchmark-results/cache-value-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" uncached 2
+      - name: Verify slot 2
+        run: bash scripts/cache-value.sh verify uncached "${{ steps.setup_2.outputs.cache-hit }}"
+
+      - name: Reset slot 3
+        run: bash scripts/cache-value.sh reset "cache-value-${{ github.run_id }}"
+      - name: Start slot 3 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 3 setup (uncached)
+        id: setup_3
+        timeout-minutes: 5
+        uses: ./setup-java
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+      - name: Slot 3 resolve
+        run: bash scripts/cache-value.sh resolve
+      - name: Record slot 3
+        run: node scripts/measure.mjs record ".benchmark-results/cache-value-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" uncached 3
+      - name: Verify slot 3
+        run: bash scripts/cache-value.sh verify uncached "${{ steps.setup_3.outputs.cache-hit }}"
+
+      - name: Reset slot 4
+        run: bash scripts/cache-value.sh reset "cache-value-${{ github.run_id }}"
+      - name: Start slot 4 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 4 setup (cached)
+        id: setup_4
+        timeout-minutes: 5
+        uses: ./setup-java
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .cache-value-key
+      - name: Slot 4 resolve
+        run: bash scripts/cache-value.sh resolve
+      - name: Record slot 4
+        run: node scripts/measure.mjs record ".benchmark-results/cache-value-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" cached 4
+      - name: Verify slot 4
+        run: bash scripts/cache-value.sh verify cached "${{ steps.setup_4.outputs.cache-hit }}"
+
+      - name: Upload sample timings
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: cache-value-timings-${{ matrix.sample }}
+          path: .benchmark-results/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
+  report:
+    name: Report
+    needs: measure
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Download sample timings
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: cache-value-timings-*
+          merge-multiple: true
+          path: .benchmark-results
+      - name: Generate cache value report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SAMPLES: ${{ inputs.samples }}
+          JAVA_VERSION: ${{ inputs.java-version }}
+          SETUP_JAVA_REPOSITORY: ${{ inputs.setup-java-repository }}
+          SETUP_JAVA_REF: ${{ inputs.setup-java-ref }}
+          CLEANUP_CACHES: ${{ inputs.cleanup-caches }}
+        run: node scripts/report-cache-value.mjs
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: cache-value-${{ github.run_id }}
+          path: cache-value-results/
+          retention-days: 30

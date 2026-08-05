@@ -1,0 +1,196 @@
+name: Cache key stability
+
+on:
+  workflow_dispatch:
+    inputs:
+      setup-java-repository:
+        description: Repository containing the setup-java action
+        required: true
+        default: actions/setup-java
+        type: string
+      setup-java-ref:
+        description: Git ref of setup-java to check
+        required: true
+        default: main
+        type: string
+      java-version:
+        description: Java feature version
+        required: true
+        default: "17"
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  PETCLINIC_REF: f182358d02e4a68e52bdbabf55ca7800288511e7
+
+concurrency:
+  group: cache-key-stability
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+# Does the cache key hit when it should, and change when it must?
+#
+# This workflow measures nothing. The key is a deterministic function of the
+# tree, so its properties can be asserted outright, and they dominate every
+# timing in this repository: a spurious key change costs a full cache miss,
+# about a minute on Spring PetClinic, where the timing benchmarks are resolving
+# effects of tens of milliseconds.
+#
+# No cache is stored by any of this. setup-java skips its post-job save when the
+# configured path does not exist, and no probe ever creates ~/.m2.
+jobs:
+  probe:
+    name: ${{ matrix.platform }} / replica ${{ matrix.replica }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+            replica: "1"
+          # Two runners on the same platform with the same tree. If their keys
+          # disagree, caching never works for anyone: every job would compute a
+          # key no other job has stored.
+          - os: ubuntu-24.04
+            platform: linux
+            replica: "2"
+          - os: windows-latest
+            platform: windows
+            replica: "1"
+          - os: macos-15
+            platform: macos
+            replica: "1"
+    env:
+      RUNNER_LABEL: ${{ matrix.platform }}
+      RUNNER_REPLICA: ${{ matrix.replica }}
+      RESULTS: .benchmark-results/cache-keys-${{ matrix.platform }}-${{ matrix.replica }}.csv
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check out Spring PetClinic
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: ${{ env.PETCLINIC_REF }}
+          path: petclinic
+          persist-credentials: false
+      - name: Check out setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: setup-java
+          persist-credentials: false
+          ref: ${{ inputs.setup-java-ref }}
+      - name: Snapshot the pristine tree
+        run: bash scripts/cache-key-stability.sh init
+
+      - name: Probe baseline
+        id: baseline
+        uses: ./setup-java
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+      - name: Record baseline
+        run: bash scripts/cache-key-stability.sh record "$RESULTS" baseline "${{ steps.baseline.outputs.cache-primary-key }}"
+
+      - name: Probe repeat
+        id: repeat
+        uses: ./setup-java
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+      - name: Record repeat
+        run: bash scripts/cache-key-stability.sh record "$RESULTS" repeat "${{ steps.repeat.outputs.cache-primary-key }}"
+
+      - name: Edit an unrelated source file
+        run: bash scripts/cache-key-stability.sh touch-unrelated
+      - name: Probe unrelated
+        id: unrelated
+        uses: ./setup-java
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+      - name: Record unrelated
+        run: bash scripts/cache-key-stability.sh record "$RESULTS" unrelated "${{ steps.unrelated.outputs.cache-primary-key }}"
+
+      - name: Restore the pristine tree
+        run: bash scripts/cache-key-stability.sh restore-tree
+      - name: Edit the dependency manifest
+        run: bash scripts/cache-key-stability.sh touch-dependencies
+      - name: Probe dependency
+        id: dependency
+        uses: ./setup-java
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+      - name: Record dependency
+        run: bash scripts/cache-key-stability.sh record "$RESULTS" dependency "${{ steps.dependency.outputs.cache-primary-key }}"
+
+      - name: Restore the pristine tree again
+        run: bash scripts/cache-key-stability.sh restore-tree
+      # An explicitly pinned path rather than the default pattern, so that both
+      # ways a user can configure this are covered. The probes above use the
+      # default `**/pom.xml`, which is what makes "editing a source file does not
+      # change the key" an assertion about what the action hashes rather than a
+      # tautology about a single named file.
+      - name: Probe explicit
+        id: explicit
+        uses: ./setup-java
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: petclinic/pom.xml
+      - name: Record explicit
+        run: bash scripts/cache-key-stability.sh record "$RESULTS" explicit "${{ steps.explicit.outputs.cache-primary-key }}"
+
+      - name: Upload keys
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: cache-keys-${{ matrix.platform }}-${{ matrix.replica }}
+          path: .benchmark-results/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
+  check:
+    name: Check
+    needs: probe
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Download keys
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: cache-keys-*
+          merge-multiple: true
+          path: .benchmark-results
+      - name: Assert cache key properties
+        env:
+          SETUP_JAVA_REPOSITORY: ${{ inputs.setup-java-repository }}
+          SETUP_JAVA_REF: ${{ inputs.setup-java-ref }}
+        run: node scripts/check-cache-keys.mjs
+      - name: Upload results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: cache-key-stability-${{ github.run_id }}
+          path: cache-key-results/
+          retention-days: 30

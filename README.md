@@ -13,7 +13,7 @@ Every workflow here measures effects of a few hundred milliseconds to a few seco
 
 **Millisecond timing.** The Actions API reports step `started_at` and `completed_at` only to the nearest second. Setup steps take two to six seconds, so reading durations from the API quantizes every measurement to ±500 ms — the same magnitude as the effects being measured. Timing is taken inside the job with `scripts/measure.mjs`.
 
-**Same-runner pairing.** Between-runner variance cannot be averaged away by adding more independent jobs to each arm. Every arm is measured inside the *same* job, in an order mirrored about the middle of the job: ABBA for two arms, and `v1..main` followed by `main..v1` for the version sweep. Differencing within a runner removes the runner's own speed, and the mirrored order cancels drift that is linear across the job. Each measured slot deletes `~/.m2` first so every restore extracts into an empty tree.
+**Same-runner pairing.** Between-runner variance cannot be averaged away by adding more independent jobs to each arm. Every arm is measured inside the _same_ job, in an order mirrored about the middle of the job: ABBA for two arms, and `v1..main` followed by `main..v1` for the version sweep. Differencing within a runner removes the runner's own speed, and the mirrored order cancels drift that is linear across the job. Each measured slot deletes `~/.m2` first so every restore extracts into an empty tree.
 
 Every job also runs one unmeasured warm-up slot first. The first setup in a job pays costs the later ones do not — DNS resolution, TLS handshakes to the cache service and the JDK host, and a cold page cache — and that is a one-off spike rather than drift, so the mirrored order cannot cancel it. Without the warm-up slot the A/A control resolved a spurious 0.4 s difference between an arm's own first and last slot.
 
@@ -23,7 +23,7 @@ Every job also runs one unmeasured warm-up slot first. The first setup in a job 
 
 **Stalled slots fail fast.** Each measured setup is capped at three minutes. A restore that has not finished by then has stalled on the cache service rather than being slow — its neighbours in the same job take a few seconds — and failing costs one runner instead of holding the run open. The version sweep restores fifteen times per job where the two-arm workflows restore five, so it runs in narrower waves.
 
-**Stalled runners are discarded.** A slot can stall on the cache service for several seconds. Which arm the stall lands on is arbitrary, so that runner contributes an arbitrarily large difference and, with ten runners, one such slot moves the mean by more than any effect being measured. Runners whose *own arm disagrees with itself* by more than a robust threshold are dropped. That decision is made purely on within-arm spread, which has the same distribution whether or not the arms differ, so unlike filtering on the arm difference it cannot bias the result. Every report lists what it discarded and why.
+**Stalled runners are discarded.** A slot can stall on the cache service for several seconds. Which arm the stall lands on is arbitrary, so that runner contributes an arbitrarily large difference and, with ten runners, one such slot moves the mean by more than any effect being measured. Runners whose _own arm disagrees with itself_ by more than a robust threshold are dropped. That decision is made purely on within-arm spread, which has the same distribution whether or not the arms differ, so unlike filtering on the arm difference it cannot bias the result. Every report lists what it discarded and why.
 
 Every report also publishes two guard rails:
 
@@ -34,14 +34,30 @@ After changing a harness, run it with both arms set to the same ref. The true ef
 
 `scripts/paired.mjs` implements the pairing and `scripts/stats.mjs` the statistics; every report builds on both.
 
-## Scenarios
+## What each workflow asks
+
+Caching is a chain, and a benchmark is only useful if it says which link it is measuring. A restore that is quick because it hit is not comparable to one that is quick because it found nothing; a difference in transfer time is usually a difference in the network rather than in setup-java. The workflows are therefore organised by question, and each is built around the _one_ quantity that answers it.
+
+| Workflow                      | Question                                   | How it is arranged                                  | Effect it can resolve  |
+| ----------------------------- | ------------------------------------------ | --------------------------------------------------- | ---------------------- |
+| **Cache value**               | What does caching buy at all?              | Real PetClinic build, cached against uncached       | Tens of seconds        |
+| **Cache key stability**       | Does the cache hit when it should?         | Deterministic assertions on the computed key        | Pass or fail           |
+| **Action overhead**           | What does setup-java's own code cost?      | ~1 MiB entry, so the transfer is not what is timed  | Tens to hundreds of ms |
+| **Transfer overlap**          | Does it overlap the transfers it makes?    | Large entries, so concurrency has something to hide | Hundreds of ms         |
+| **Cache save**                | What does the first run pay?               | Post-run save of a Maven-shaped tree                | Seconds                |
+| **JDK cache**                 | Is caching the JDK worth it?               | `cache-jdk` off against on, same ref                | Seconds                |
+| **Benchmark** (version sweep) | How does `main` compare with each release? | All versions on one runner, mirrored order          | Hundreds of ms         |
+
+The sizes in the third column are the design, not an accident. setup-java does not move the bytes itself — it hands the transfer to `@actions/cache` — so a benchmark with a large fixture measures the network and a benchmark with a small one measures the action. **Action overhead** and **Transfer overlap** are deliberately the same measurement at two fixture sizes for exactly that reason, and together they decompose a restore into the part setup-java controls and the part it does not.
+
+## Version sweep
 
 Each action version runs with Java 17 on `ubuntu-24.04`:
 
-| Distribution | Expected setup path | Purpose |
-| --- | --- | --- |
-| Eclipse Temurin | Hosted runner tool-cache hit | Measures setup overhead when the JDK is already available |
-| Microsoft Build of OpenJDK | JDK download and extraction | Measures setup overhead when the JDK must be installed |
+| Distribution               | Expected setup path          | Purpose                                                   |
+| -------------------------- | ---------------------------- | --------------------------------------------------------- |
+| Eclipse Temurin            | Hosted runner tool-cache hit | Measures setup overhead when the JDK is already available |
+| Microsoft Build of OpenJDK | JDK download and extraction  | Measures setup overhead when the JDK must be installed    |
 
 v1 predates distribution selection and integrated dependency caching. It runs only its native Zulu installer path. v2 supports the Temurin and Microsoft scenarios, but its bundled legacy cache client is rejected by the current Actions cache service. v1 and v2 therefore have no Maven cache storage, and their cold/warm labels are repeated uncached samples.
 
@@ -51,12 +67,12 @@ A seed job compiles Spring PetClinic once to populate a single Maven cache entry
 
 **Only comparable versions are ranked.** v4, v5.2, v5.6 and `main` all restore the same seeded entry through `cache-dependency-path`, so a difference between them is a difference in the implementation. `main` is ranked against each of them, with Holm's step-down correction across that family: it is tested against every one of them in one run, so without a correction the chance that one comparison clears 0.05 by luck is far above 0.05.
 
-v1, v2 and v3 are measured on the same runners and published, but they carry no verdict, because a verdict would report a difference in the *workload* as though it were a difference in the implementation:
+v1, v2 and v3 are measured on the same runners and published, but they carry no verdict, because a verdict would report a difference in the _workload_ as though it were a difference in the implementation:
 
-| Version | Why it is not ranked |
-| --- | --- |
-| v1.4.4 | Installs its own JDK and does no dependency caching |
-| v2.5.1 | Its bundled cache client is rejected by the current cache service, so it restores nothing |
+| Version | Why it is not ranked                                                                                                                                  |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.4.4  | Installs its own JDK and does no dependency caching                                                                                                   |
+| v2.5.1  | Its bundled cache client is rejected by the current cache service, so it restores nothing                                                             |
 | v3.14.1 | Predates `cache-dependency-path` and keys on `pom.xml`, so it restores its own entry — the blob confound described above, which pairing cannot remove |
 
 v3 is the instructive case. In run 30979614347 it took 3.69 s and 3.89 s on two runners that ran v4 in 0.50 s and 0.52 s moments later in the same job. A sevenfold gap that appears on some runners and not others is blob placement, not code, and ranking it would have published a verdict for it.
@@ -65,38 +81,70 @@ Spring PetClinic and third-party actions are pinned to commits. `setup-java@main
 
 ## Running
 
-Open **Actions > Benchmark setup-java > Run workflow**. Choose how many runners to measure on; each contributes two observations per version. Ten is the default.
+Every workflow is dispatched from **Actions > _(workflow)_ > Run workflow**. The ones that compare two refs take a `baseline-ref` and a `candidate-ref`, so any of them can be pointed at a PR branch; the ones that sample across runners take a runner count, where each runner contributes two observations per arm.
 
-The report job writes a Markdown summary and uploads raw JSON and CSV files. Benchmark-created caches are deleted after measurement by default, preventing repeated runs from consuming repository cache storage. Disable cleanup when you need to inspect the entries manually.
+Each report job writes a Markdown summary to the run and uploads raw JSON and CSV. Benchmark-created caches are deleted after measurement, because the repository shares one cache budget across all of these workflows and an entry left behind by one run evicts the seeded entries another depends on.
 
-### Focused cache restore
+**Run a harness change against itself before believing it.** Set both refs to the same value: the true effect is then exactly zero, and any verdict other than `inconclusive` or `within-noise` is a defect rather than a finding.
 
-The **Focused cache restore** workflow isolates the setup step to compare two `actions/setup-java` refs (by default `v4.8.0` against `main`). It uses a pinned Temurin JDK from the hosted runner tool cache, seeds a synthetic 160 MiB dependency cache for both arms and a 9 MiB wrapper cache for the candidate, and runs no Maven command. Measurement jobs therefore contain no JDK or Maven Central downloads; they measure JDK discovery and Actions cache restoration only.
+## The workflows in detail
 
-This workflow is the reference for how a comparison should be measured here. Three properties make its verdicts trustworthy:
+### Cache value
 
-**Millisecond timing.** The Actions API reports step `started_at` and `completed_at` only to the nearest second. Setup steps take two to six seconds, so reading durations from the API quantizes every measurement to ±500 ms — the same magnitude as the effects being measured. Timing is therefore taken inside the job with `scripts/measure.mjs`.
+The **Cache value** workflow answers the question a user actually has: is turning `cache: maven` on worth it? It builds Spring PetClinic for real, cached against uncached, in ABBA order on one runner.
 
-**Same-runner pairing.** Between-runner variance on hosted runners is larger than the effects under test, and it cannot be averaged away by adding more independent jobs to each arm. Both arms run in the *same* job in ABBA order — baseline, candidate, candidate, baseline — so each runner yields one paired difference with the runner's own speed cancelled out. The mirrored order also cancels drift across the four slots. Each measured slot deletes `~/.m2` first so every restore extracts into an empty tree.
+This is the only scenario whose effect is large enough to see without any statistical machinery, and that is the point of running it — it establishes the scale everything else is a fraction of. A result here in the tens of seconds is what makes an argument about 40 ms of action overhead worth having or not worth having.
 
-**One cache, both arms.** A cache entry's download throughput depends on where the service placed the stored blob, and that placement is fixed for the life of the entry. Giving each arm its own seeded cache therefore confounds the arm with its blob, and because the bias is identical on every runner, pairing cannot remove it and more samples only tighten the interval around the wrong answer. A single entry is seeded and both arms restore it.
+### Cache key stability
 
-**Intervals, not point estimates.** `scripts/stats.mjs` reports a bootstrap 95% confidence interval, a permutation p-value, and a Hodges-Lehmann shift for every comparison, and turns them into an explicit verdict. A comparison whose interval includes zero is reported as `inconclusive` rather than as a number that looks like a result.
+The **Cache key stability** workflow measures nothing. The cache key is a deterministic function of the tree, so its properties can be asserted outright rather than estimated, and those properties dominate every timing in this repository: a key that changes when it should not costs a full cache miss — about a minute on PetClinic — where the timing workflows are resolving tens of milliseconds.
 
-The report also publishes two guard rails:
+It checks that the key is unchanged when the same tree is hashed twice, unchanged when an unrelated source file is edited, changed when the dependency manifest is edited, identical across two runners on the same platform, and different across platforms. The cross-runner check is the important one: if two runners on the same tree disagree, caching never works for anyone, because every job computes a key no other job has stored.
 
-- A **noise floor**, the median spread between the two slots of the same arm on one runner. An effect smaller than this is reported as `within-noise` even when its interval excludes zero.
-- An **A/A control**, the same estimator applied to the baseline against itself. It costs no extra jobs because each arm is already measured twice per runner. A healthy run reports `within-noise` or `inconclusive`; anything else means slot ordering is biasing the results and the headline verdict cannot be trusted.
+Nothing is stored by any of it. setup-java skips its post-job save when the configured path does not exist, and no probe ever creates `~/.m2`.
 
-Run the workflow with `baseline-ref` and `candidate-ref` set to the same value after changing it. The true effect is then exactly zero, and any verdict other than `inconclusive` or `within-noise` is a defect in the harness rather than a finding. That check is what surfaced the per-arm cache confound described above: on identical code it reported a 0.859 s improvement, with the baseline blob served at ~60 MB/s and the candidate blob at ~105–130 MB/s on the same runner in the same job.
+### Action overhead
 
-Point `baseline-ref` and `candidate-ref` at any two refs — including a PR branch — to check whether a change delivers a real improvement.
+The **Action overhead** workflow compares two refs across three operating systems, four cache profiles and two configuration layouts, with a cache entry of about a megabyte spread over many small files. The small entry is the whole design: it leaves resolving a distribution, computing a cache key, writing settings and toolchains, and the bookkeeping around a restore as what is being timed, rather than the network.
 
-#### Why this replaced the previous design
+The four cache profiles are nested levels of work rather than competing options:
 
-The earlier version of this workflow ran each arm as its own matrix of independent jobs, read durations from the Actions API, and reported a "paired median delta" that paired `sample N` of one arm with `sample N` of the other. Those samples shared no runner and no point in time, so the pairing removed no variance at all.
+| Profile       | What the action does                                |
+| ------------- | --------------------------------------------------- |
+| `none`        | Never touches the cache code                        |
+| `maven-miss`  | Computes a key and is told no                       |
+| `maven-hit`   | Computes a key, is told yes, unpacks a ~1 MiB entry |
+| `gradle-miss` | A miss through the other package manager            |
+
+Differencing the levels says where the time goes, and the report publishes that decomposition alongside the comparison. Those level differences are between-configuration, so they are reported as observed medians with no interval and no verdict; they describe what a setup costs rather than establishing that two refs differ.
+
+Each configuration is one runner, so it yields one paired difference and cannot support an interval alone. Configurations are treated as **blocks** — arms compared within a configuration, on the same runner, in ABBA order after a discarded warm-up slot — and the differences pooled across the matrix.
+
+Every slot records setup-java's `cache-hit` output, and the report refuses to be read normally if a `maven-hit` slot missed or a `maven-miss` slot hit, because either turns a level of the decomposition into a different level and the labels stop being true.
+
+#### Why this replaced the Maven configuration warm path
+
+The workflow this grew out of was called a warm path and was not one. It had no seed job, and its synthetic `benchmark/pom.xml` hashed to a key nothing had ever stored, so every one of its "warm" restores was a miss — the job logs read `maven cache is not found` and `Path Validation Error ... hence no cache is being saved`. Its three cache profiles were three variations on a failed lookup, and it could not see the restore path at all. The differences it reported were real, but they were differences in the cost of _missing_, published under a heading that said warm.
+
+### Transfer overlap
+
+The **Transfer overlap** workflow isolates the setup step to compare two refs (by default `v4.8.0` against `main`) with a synthetic 160 MiB dependency cache seeded for both arms and a 9 MiB wrapper cache, and runs no Maven command. Measurement jobs contain no JDK or Maven Central downloads.
+
+When a build configures more than one cache, setup-java restores both, and whether it does so in sequence or at the same time is its own choice — unlike the throughput of either transfer. That makes overlap one of the few properties of caching a change to this action can actually move, and [actions/setup-java#1174](https://github.com/actions/setup-java/pull/1174) moved it by awaiting the two restores together. An effect that exists only while a transfer is in flight is proportional to how long the transfer takes, which is why the fixtures here are large and why the same effect is invisible in **Action overhead**.
+
+This workflow is also the reference implementation for how a comparison is measured in this repository. Point `baseline-ref` and `candidate-ref` at any two refs — including a PR branch — to check whether a change delivers a real improvement, or at the _same_ ref to check the harness itself.
+
+#### Why the harness was rebuilt
+
+The earlier version ran each arm as its own matrix of independent jobs, read durations from the Actions API, and reported a "paired median delta" that paired `sample N` of one arm with `sample N` of the other. Those samples shared no runner and no point in time, so the pairing removed no variance at all.
 
 Two consecutive runs of that harness against an unchanged `v4.8.0` — where the true difference is exactly zero — produced medians of 2 s and 3 s, a spurious 1.2 s separation whose confidence interval excluded zero. Over the same pair of runs the reported candidate delta flipped from +0.6 s to −0.8 s. `scripts/stats.test.mjs` pins that dataset as a regression test so unpaired sampling is not reintroduced.
+
+### Cache save
+
+The **Cache save** workflow measures what the first run pays. A cache miss costs the download the user already paid for _plus_ the save, and nothing else here measured the second half of that.
+
+setup-java saves in its post-job hook, which cannot be bracketed by a timer from inside the job. The save is therefore driven directly through the `@actions/cache` version each ref pins, which is where the difference between refs actually lives, against a Maven-shaped fixture: nested group directories of small `.jar`, `.pom` and `.sha1` files rather than one large blob, because archive cost tracks file count and directory depth as much as it tracks bytes.
 
 ### JDK cache
 
@@ -108,31 +156,15 @@ Every seed and measured slot removes matching JDKs from `$RUNNER_TOOL_CACHE` fir
 
 JDK cache keys are derived from the JDK's identity and source, so unlike dependency cache keys they cannot be namespaced per run; the `prepare` job deletes existing JDK caches before seeding.
 
-Open **Actions > JDK cache > Run workflow** to select the distribution, Java version, action ref, runner count, and cache cleanup behavior.
-
-### Maven configuration warm path
-
-The **Maven configuration warm path** workflow compares two refs of setup-java across 36 configurations: three operating systems, three cache profiles, single and multiple Java versions, and an empty or pre-existing `toolchains.xml`.
-
-Unlike the other workflows it does not repeat one scenario across many runners; it runs each configuration once. A single configuration therefore yields one paired difference and cannot support an interval on its own. Each configuration is instead treated as a **block**: the arms are compared within it, on the same runner, in ABBA order after a discarded warm-up slot, and the differences are pooled across the matrix. That answers the question the workflow actually asks — whether the candidate differs from the baseline across configurations — at no extra job cost.
-
-Per-configuration numbers are still published, but as single observations with no verdict, because that is all they are. Breakdowns by operating system and by cache profile are reported with their own intervals; groups with few blocks will read `inconclusive` even where the pooled result does not, which is the intended behaviour rather than a defect.
-
-Open **Actions > Maven configuration warm path > Run workflow** to select the repository and the two refs.
-
 ## Reading results
 
-The summary reports medians for:
+**Read the verdict, not the point estimate.** Every comparison reports one, and it is the only part of the output that has been checked against the harness's own noise. A result reported as `inconclusive` has established nothing however suggestive its number looks, and one reported as `within-noise` is smaller than this harness can resolve on hosted runners.
 
-- setup time, including JDK discovery/download and dependency-cache restore;
-- Spring PetClinic `compile` time;
-- the `setup-java` post step that saves caches;
-- compressed cache storage per isolated case;
-- estimated billed minutes, calculated by rounding each Linux job to a whole minute.
+**Check the A/A control first.** It applies the same estimator to one arm against itself, where the true difference is exactly zero. A healthy run reports `within-noise` or `inconclusive`. Anything else means the run measured the harness rather than the code, and the headline is void.
 
-Public repositories do not pay for standard GitHub-hosted runners. The estimated minutes are included to make the results applicable to private repositories; actual charges depend on the account plan and runner type.
+**Check which link was measured.** A number from **Action overhead** and a number from **Transfer overlap** are not the same quantity and do not add up to a user-visible saving on their own; the scale that makes either of them matter comes from **Cache value**.
 
-Network throughput, hosted-runner image changes, upstream artifact availability, and runner load all introduce variance. Read the verdict rather than the point estimate: a comparison reported as `inconclusive` has not established anything, however suggestive its number looks, and one reported as `within-noise` is smaller than the harness can resolve. Check the A/A control before trusting any headline — if it resolves a difference, the run is measuring the harness rather than the code.
+Network throughput, hosted-runner image changes, upstream artifact availability and runner load all introduce variance, which is what the guard rails above exist to absorb.
 
 ## Local checks
 

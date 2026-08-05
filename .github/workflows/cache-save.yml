@@ -1,0 +1,176 @@
+name: Cache save
+
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: Runners to measure on (each contributes 2 paired observations)
+        required: true
+        type: choice
+        options:
+          - "2"
+          - "6"
+          - "10"
+          - "20"
+        default: "10"
+      setup-java-repository:
+        description: Repository containing the setup-java action
+        required: true
+        default: actions/setup-java
+        type: string
+      baseline-ref:
+        description: Git ref for the baseline arm
+        required: true
+        default: v4.8.0
+        type: string
+      candidate-ref:
+        description: Git ref for the candidate arm
+        required: true
+        default: main
+        type: string
+      fixture-mib:
+        description: Synthetic Maven cache fixture size
+        required: true
+        type: choice
+        options:
+          - "16"
+          - "64"
+          - "160"
+        default: "64"
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  CACHE_KEY_PREFIX: cache-save-${{ github.run_id }}-
+
+concurrency:
+  group: cache-save
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # setup-java saves Maven dependencies from its post-job hook, which cannot be
+  # bracketed with the millisecond stopwatch used by the other scenarios. The
+  # transfer itself is delegated to @actions/cache.saveCache in src/cache.ts, so
+  # this workflow times that toolkit call directly with the dependency version
+  # resolved by each checked-out setup-java ref. That measures the save cost users
+  # pay on a cache miss without falling back to the Actions API's one-second step
+  # timestamps.
+  measure:
+    name: paired / ${{ matrix.sample }}
+    runs-on: ubuntu-24.04
+    # At this fixture size a normal save is seconds, not minutes. A slot that has
+    # not returned after three minutes is a cache-service stall; the report can
+    # discard the incomplete runner instead of letting the workflow wait for the
+    # platform default timeout.
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      # Every slot creates a fresh cache entry. Running too many uploaders at once
+      # mostly measures service contention, so the waves match the transfer overlap
+      # workflow rather than saturating the cache backend.
+      max-parallel: 4
+      matrix:
+        sample: ${{ fromJSON(inputs.samples == '20' && '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]' || inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check out baseline setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: baseline
+          persist-credentials: false
+          ref: ${{ inputs.baseline-ref }}
+      - name: Check out candidate setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: candidate
+          persist-credentials: false
+          ref: ${{ inputs.candidate-ref }}
+      - name: Install baseline cache client
+        run: bash scripts/cache-save.sh install-client baseline
+      - name: Install candidate cache client
+        run: bash scripts/cache-save.sh install-client candidate
+      # The fixture keeps the total bytes exact but spreads them across a Maven
+      # local-repository shape: nested group directories, version directories,
+      # jars and their .pom/.sha1 sidecars. Real cache saves pay for tar traversal
+      # and compression before upload, so a single flat file would hide changes in
+      # archive tooling or path enumeration.
+      - name: Create synthetic cache fixture
+        run: |
+          bash scripts/cache-save.sh prepare-fixture "${{ inputs.fixture-mib }}"
+          bash scripts/cache-save.sh verify-fixture "${{ inputs.fixture-mib }}"
+
+      # The first cache client call in a job pays connection setup and local page
+      # cache costs that later slots do not. That one-off spike is not linear
+      # drift, so ABBA cannot cancel it; a discarded save pays it before the slots
+      # that enter the paired estimate.
+      - name: Warm-up save (discarded)
+        timeout-minutes: 3
+        run: bash scripts/cache-save.sh save baseline "${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-warmup-baseline"
+
+      - name: Slot 1 save (baseline)
+        timeout-minutes: 3
+        run: bash scripts/cache-save.sh save baseline "${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-1-baseline" ".benchmark-results/cache-save-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 1
+
+      - name: Slot 2 save (candidate)
+        timeout-minutes: 3
+        run: bash scripts/cache-save.sh save candidate "${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-2-candidate" ".benchmark-results/cache-save-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 2
+
+      - name: Slot 3 save (candidate)
+        timeout-minutes: 3
+        run: bash scripts/cache-save.sh save candidate "${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-3-candidate" ".benchmark-results/cache-save-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 3
+
+      - name: Slot 4 save (baseline)
+        timeout-minutes: 3
+        run: bash scripts/cache-save.sh save baseline "${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-4-baseline" ".benchmark-results/cache-save-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 4
+
+      - name: Upload sample timings
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: cache-save-timings-${{ matrix.sample }}
+          path: .benchmark-results/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
+  report:
+    name: Report
+    needs: measure
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Download sample timings
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: cache-save-timings-*
+          merge-multiple: true
+          path: .benchmark-results
+      - name: Generate cache-save report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_REF: ${{ inputs.baseline-ref }}
+          CANDIDATE_REF: ${{ inputs.candidate-ref }}
+          SETUP_JAVA_REPOSITORY: ${{ inputs.setup-java-repository }}
+          FIXTURE_MIB: ${{ inputs.fixture-mib }}
+          CACHE_KEY_PREFIX: ${{ env.CACHE_KEY_PREFIX }}
+        run: node scripts/report-cache-save.mjs
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: cache-save-${{ github.run_id }}
+          path: cache-save-results/
+          retention-days: 30

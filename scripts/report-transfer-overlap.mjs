@@ -22,7 +22,7 @@ import { classify, describeVerdict, formatInterval } from "./stats.mjs";
 export { buildPairs, noiseFloor, parseSamples };
 
 export function readSampleFiles(directory) {
-  return readPairedSampleFiles("focused-timings", directory);
+  return readPairedSampleFiles("transfer-overlap-timings", directory);
 }
 
 export function analyze(rows) {
@@ -68,7 +68,7 @@ async function allPages(path, field, token) {
 export function markdown(metadata, analysis, caches) {
   const { baseline, candidate, interval, control } = analysis;
   const lines = [
-    "# Focused cache restore benchmark",
+    "# Transfer overlap benchmark",
     "",
     `Temurin ${metadata.javaVersion}, ${analysis.pairs.length} runners x 2 paired observations, run ${metadata.runId}.`,
     `Baseline \`${metadata.baselineRef}\` vs candidate \`${metadata.candidateRef}\` from \`${metadata.setupJavaRepository}\`.`,
@@ -166,7 +166,7 @@ export async function main(env = process.env) {
   // Both arms restore this single entry, so the stored blob cannot bias the
   // comparison. The wrapper entry is optional: a baseline that predates wrapper
   // caching simply never restores it.
-  const benchmarkId = `focused-${runId}`;
+  const benchmarkId = `transfer-overlap-${runId}`;
   const expected = [
     {
       type: "maven-dependencies",
@@ -176,7 +176,7 @@ export async function main(env = process.env) {
     {
       type: "maven-wrapper",
       key: `setup-java-Linux-x64-maven-wrapper-${hashFilesSingle(
-        `wrapperVersion=focused\n# benchmark-id=${benchmarkId}\n`,
+        `wrapperVersion=overlap\n# benchmark-id=${benchmarkId}\n`,
       )}`,
       required: false,
     },
@@ -210,20 +210,20 @@ export async function main(env = process.env) {
   };
   const report = markdown(metadata, analysis, caches);
 
-  await mkdir("focused-results", { recursive: true });
+  await mkdir("transfer-overlap-results", { recursive: true });
   await writeFile(
-    "focused-results/results.json",
+    "transfer-overlap-results/results.json",
     `${JSON.stringify({ metadata, analysis, caches }, null, 2)}\n`,
   );
   await writeFile(
-    "focused-results/results.csv",
+    "transfer-overlap-results/results.csv",
     `sample,arm,slot,seconds\n${rows
       .map((row) =>
         [row.sample, row.arm, row.slot, row.seconds].map(csvValue).join(","),
       )
       .join("\n")}\n`,
   );
-  await writeFile("focused-results/summary.md", report);
+  await writeFile("transfer-overlap-results/summary.md", report);
   await appendFile(env.GITHUB_STEP_SUMMARY, report);
 
   if (env.CLEANUP_CACHES === "true") {
@@ -232,7 +232,7 @@ export async function main(env = process.env) {
         method: "DELETE",
       });
     }
-    console.log(`Deleted ${caches.length} focused benchmark caches`);
+    console.log(`Deleted ${caches.length} transfer-overlap benchmark caches`);
   }
 }
 

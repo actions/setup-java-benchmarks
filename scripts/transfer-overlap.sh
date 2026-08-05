@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 
-# Fixture and cache-identity helpers for the focused cache restore benchmark.
+# Fixture and cache-identity helpers for the transfer overlap benchmark.
 
 set -euo pipefail
 
 command=${1:?command is required}
 
-dependency_fixture="$HOME/.m2/repository/focused-benchmark/dependencies.bin"
-wrapper_fixture="$HOME/.m2/wrapper/dists/focused-benchmark/wrapper.bin"
+dependency_fixture="$HOME/.m2/repository/transfer-overlap-benchmark/dependencies.bin"
+wrapper_fixture="$HOME/.m2/wrapper/dists/transfer-overlap-benchmark/wrapper.bin"
 
 write_identity() {
   local benchmark_id=$1
-  printf '%s\n' "$benchmark_id" > .focused-cache-key
+  printf '%s\n' "$benchmark_id" > .transfer-overlap-cache-key
   mkdir -p .mvn/wrapper
-  printf 'wrapperVersion=focused\n# benchmark-id=%s\n' "$benchmark_id" \
+  printf 'wrapperVersion=overlap\n# benchmark-id=%s\n' "$benchmark_id" \
     > .mvn/wrapper/maven-wrapper.properties
 }
 

@@ -1,4 +1,4 @@
-name: Focused cache restore
+name: Transfer overlap
 
 on:
   workflow_dispatch:
@@ -38,6 +38,22 @@ permissions:
   actions: write
   contents: read
 
+# Does setup-java overlap the transfers it has to make?
+#
+# When a build configures more than one cache — a Maven local repository and a
+# wrapper distribution, say — setup-java restores both. Whether it does so one
+# after the other or at the same time is entirely its own choice, unlike the
+# throughput of either transfer, which belongs to `@actions/cache` and to the
+# network. That makes overlap one of the few properties of caching that a change
+# to this action can actually move, and PR actions/setup-java#1174 moved it, by
+# awaiting the two restores together instead of in sequence.
+#
+# The fixtures are deliberately large. An effect that exists only while a
+# transfer is in flight is proportional to how long the transfer takes, so a
+# small entry would shrink the very thing being measured below the noise. This
+# is the mirror image of the action overhead scenario, which uses a tiny entry
+# for exactly the opposite reason.
+
 env:
   # A cache segment download that fails leaves @actions/cache holding an armed
   # timer it never clears, so the action idles for the rest of this timeout after
@@ -51,7 +67,7 @@ env:
   WRAPPER_FIXTURE_MIB: "9"
 
 concurrency:
-  group: focused-cache-restore
+  group: transfer-overlap
   cancel-in-progress: false
 
 defaults:
@@ -96,7 +112,7 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.candidate-ref }}
       - name: Prepare cache identity
-        run: bash scripts/focused-cache-restore.sh prepare "focused-${{ github.run_id }}"
+        run: bash scripts/transfer-overlap.sh prepare "transfer-overlap-${{ github.run_id }}"
       # Seeded with the candidate so that the wrapper cache, which only newer
       # revisions maintain, is populated too. The baseline simply does not
       # restore it.
@@ -106,9 +122,9 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-dependency-path: .focused-cache-key
+          cache-dependency-path: .transfer-overlap-cache-key
       - name: Create synthetic cache fixtures
-        run: bash scripts/focused-cache-restore.sh seed-fixtures
+        run: bash scripts/transfer-overlap.sh seed-fixtures
 
   # Both arms are measured inside the same job, in ABBA order. Sharing a runner
   # removes the between-runner variance that otherwise swamps the effect, and
@@ -162,7 +178,7 @@ jobs:
       # difference between an arm's own first and last slot. This slot pays those
       # costs and is discarded.
       - name: Reset warm-up slot
-        run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
+        run: bash scripts/transfer-overlap.sh reset "transfer-overlap-${{ github.run_id }}"
       - name: Warm-up setup (discarded)
         # A restore that has not finished in three minutes has stalled on the
         # cache service rather than being slow: its neighbours in the same job
@@ -175,10 +191,10 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-dependency-path: .focused-cache-key
+          cache-dependency-path: .transfer-overlap-cache-key
 
       - name: Reset slot 1
-        run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
+        run: bash scripts/transfer-overlap.sh reset "transfer-overlap-${{ github.run_id }}"
       - name: Start slot 1 timer
         run: node scripts/measure.mjs start
       - name: Slot 1 setup (baseline)
@@ -193,14 +209,14 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-dependency-path: .focused-cache-key
+          cache-dependency-path: .transfer-overlap-cache-key
       - name: Record slot 1
-        run: node scripts/measure.mjs record ".benchmark-results/focused-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 1
+        run: node scripts/measure.mjs record ".benchmark-results/transfer-overlap-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 1
       - name: Verify slot 1 fixtures
-        run: bash scripts/focused-cache-restore.sh verify baseline
+        run: bash scripts/transfer-overlap.sh verify baseline
 
       - name: Reset slot 2
-        run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
+        run: bash scripts/transfer-overlap.sh reset "transfer-overlap-${{ github.run_id }}"
       - name: Start slot 2 timer
         run: node scripts/measure.mjs start
       - name: Slot 2 setup (candidate)
@@ -215,14 +231,14 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-dependency-path: .focused-cache-key
+          cache-dependency-path: .transfer-overlap-cache-key
       - name: Record slot 2
-        run: node scripts/measure.mjs record ".benchmark-results/focused-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 2
+        run: node scripts/measure.mjs record ".benchmark-results/transfer-overlap-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 2
       - name: Verify slot 2 fixtures
-        run: bash scripts/focused-cache-restore.sh verify candidate
+        run: bash scripts/transfer-overlap.sh verify candidate
 
       - name: Reset slot 3
-        run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
+        run: bash scripts/transfer-overlap.sh reset "transfer-overlap-${{ github.run_id }}"
       - name: Start slot 3 timer
         run: node scripts/measure.mjs start
       - name: Slot 3 setup (candidate)
@@ -237,14 +253,14 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-dependency-path: .focused-cache-key
+          cache-dependency-path: .transfer-overlap-cache-key
       - name: Record slot 3
-        run: node scripts/measure.mjs record ".benchmark-results/focused-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 3
+        run: node scripts/measure.mjs record ".benchmark-results/transfer-overlap-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 3
       - name: Verify slot 3 fixtures
-        run: bash scripts/focused-cache-restore.sh verify candidate
+        run: bash scripts/transfer-overlap.sh verify candidate
 
       - name: Reset slot 4
-        run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
+        run: bash scripts/transfer-overlap.sh reset "transfer-overlap-${{ github.run_id }}"
       - name: Start slot 4 timer
         run: node scripts/measure.mjs start
       - name: Slot 4 setup (baseline)
@@ -259,16 +275,16 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
-          cache-dependency-path: .focused-cache-key
+          cache-dependency-path: .transfer-overlap-cache-key
       - name: Record slot 4
-        run: node scripts/measure.mjs record ".benchmark-results/focused-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 4
+        run: node scripts/measure.mjs record ".benchmark-results/transfer-overlap-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 4
       - name: Verify slot 4 fixtures
-        run: bash scripts/focused-cache-restore.sh verify baseline
+        run: bash scripts/transfer-overlap.sh verify baseline
 
       - name: Upload sample timings
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: focused-timings-${{ matrix.sample }}
+          name: transfer-overlap-timings-${{ matrix.sample }}
           path: .benchmark-results/
           include-hidden-files: true
           if-no-files-found: error
@@ -287,10 +303,10 @@ jobs:
       - name: Download sample timings
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
-          pattern: focused-timings-*
+          pattern: transfer-overlap-timings-*
           merge-multiple: true
           path: .benchmark-results
-      - name: Generate focused report
+      - name: Generate transfer overlap report
         env:
           GH_TOKEN: ${{ github.token }}
           SAMPLES: ${{ inputs.samples }}
@@ -298,10 +314,10 @@ jobs:
           CANDIDATE_REF: ${{ inputs.candidate-ref }}
           SETUP_JAVA_REPOSITORY: ${{ inputs.setup-java-repository }}
           CLEANUP_CACHES: ${{ inputs.cleanup-caches }}
-        run: node scripts/report-focused.mjs
+        run: node scripts/report-transfer-overlap.mjs
       - name: Upload benchmark results
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: focused-cache-restore-${{ github.run_id }}
-          path: focused-results/
+          name: transfer-overlap-${{ github.run_id }}
+          path: transfer-overlap-results/
           retention-days: 30
