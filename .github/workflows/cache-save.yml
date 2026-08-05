@@ -21,8 +21,16 @@ on:
       baseline-ref:
         description: Git ref for the baseline arm
         required: true
-        default: v4.8.0
-        type: string
+        # The three releases worth comparing main against: the newest release,
+        # the one before the v5 cache work settled, and the last v4. Anything
+        # older restores its own cache entry or is rejected by the cache service
+        # outright, which confounds the comparison rather than extending it.
+        type: choice
+        options:
+          - v5.6.0
+          - v5.2.0
+          - v4.9.1
+        default: v5.6.0
       candidate-ref:
         description: Git ref for the candidate arm
         required: true
