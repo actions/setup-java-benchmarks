@@ -52,11 +52,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh cache list --limit 10000 --json id,key \
-            --jq '.[] | select(.key | startswith("setup-java-jdk-")) | .id' |
-          while read -r cache_id; do
-            gh cache delete "$cache_id"
-          done
+          set -euo pipefail
+          cache_ids="$(
+            gh cache list --repo "${{ github.repository }}" --limit 10000 \
+              --json id,key \
+              --jq '.[] | select(.key | startswith("setup-java-jdk-")) | .id'
+          )"
+          if [[ -z "$cache_ids" ]]; then
+            echo "No existing JDK caches found"
+            exit 0
+          fi
+          while IFS= read -r cache_id; do
+            gh cache delete "$cache_id" --repo "${{ github.repository }}"
+          done <<< "$cache_ids"
 
   baseline-seed:
     name: baseline / seed
