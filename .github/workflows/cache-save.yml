@@ -116,23 +116,59 @@ jobs:
       # that enter the paired estimate.
       - name: Warm-up save (discarded)
         timeout-minutes: 3
-        run: bash scripts/cache-save.sh save baseline "${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-warmup-baseline"
+        uses: ./.github/actions/cache-save-slot
+        with:
+          arm-directory: baseline
+          fixture-directory: ${{ env.FIXTURE_DIR }}
+          key: ${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-warmup-baseline
 
       - name: Slot 1 save (baseline)
         timeout-minutes: 3
-        run: bash scripts/cache-save.sh save baseline "${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-1-baseline" ".benchmark-results/cache-save-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 1
+        uses: ./.github/actions/cache-save-slot
+        with:
+          arm-directory: baseline
+          fixture-directory: ${{ env.FIXTURE_DIR }}
+          key: ${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-1-baseline
+          results-file: .benchmark-results/cache-save-timings-${{ matrix.sample }}.csv
+          sample: ${{ matrix.sample }}
+          arm: baseline
+          slot: 1
 
       - name: Slot 2 save (candidate)
         timeout-minutes: 3
-        run: bash scripts/cache-save.sh save candidate "${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-2-candidate" ".benchmark-results/cache-save-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 2
+        uses: ./.github/actions/cache-save-slot
+        with:
+          arm-directory: candidate
+          fixture-directory: ${{ env.FIXTURE_DIR }}
+          key: ${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-2-candidate
+          results-file: .benchmark-results/cache-save-timings-${{ matrix.sample }}.csv
+          sample: ${{ matrix.sample }}
+          arm: candidate
+          slot: 2
 
       - name: Slot 3 save (candidate)
         timeout-minutes: 3
-        run: bash scripts/cache-save.sh save candidate "${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-3-candidate" ".benchmark-results/cache-save-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 3
+        uses: ./.github/actions/cache-save-slot
+        with:
+          arm-directory: candidate
+          fixture-directory: ${{ env.FIXTURE_DIR }}
+          key: ${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-3-candidate
+          results-file: .benchmark-results/cache-save-timings-${{ matrix.sample }}.csv
+          sample: ${{ matrix.sample }}
+          arm: candidate
+          slot: 3
 
       - name: Slot 4 save (baseline)
         timeout-minutes: 3
-        run: bash scripts/cache-save.sh save baseline "${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-4-baseline" ".benchmark-results/cache-save-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 4
+        uses: ./.github/actions/cache-save-slot
+        with:
+          arm-directory: baseline
+          fixture-directory: ${{ env.FIXTURE_DIR }}
+          key: ${{ env.CACHE_KEY_PREFIX }}${{ matrix.sample }}-4-baseline
+          results-file: .benchmark-results/cache-save-timings-${{ matrix.sample }}.csv
+          sample: ${{ matrix.sample }}
+          arm: baseline
+          slot: 4
 
       - name: Upload sample timings
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

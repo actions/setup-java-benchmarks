@@ -148,6 +148,8 @@ The **Cache save** workflow measures what the first run pays. A cache miss costs
 
 setup-java saves in its post-job hook, which cannot be bracketed by a timer from inside the job. The save is therefore driven directly through the `@actions/cache` version each ref pins, which is where the difference between refs actually lives, against a Maven-shaped fixture: nested group directories of small `.jar`, `.pom` and `.sha1` files rather than one large blob, because archive cost tracks file count and directory depth as much as it tracks bytes.
 
+Each save runs in a local action at `.github/actions/cache-save-slot` rather than a `run:` step. The runner injects the cache service URL and runtime token into action steps only, so the same client driven from `run:` fails its reservation with `Cache Service Url not found`. `saveCache` swallows that, returns `-1`, and leaves behind a duration that looks like a measurement — the first live run of this scenario reported 10.278s with a standard deviation of 0.008s across ten runners, which was a retry backoff rather than an upload. The slot now fails when `saveCache` does not return a real cache id, so that failure mode cannot be published as a result again.
+
 ### JDK cache
 
 The **JDK cache** workflow measures the installed-JDK cache added on `actions/setup-java@main`. It compares `cache-jdk: false` against `cache-jdk: true`, defaulting to Microsoft Build of OpenJDK 17. Both arms use the same action ref, so the result isolates JDK caching instead of conflating it with implementation changes between commits.
