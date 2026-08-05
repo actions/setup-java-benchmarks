@@ -100,9 +100,13 @@ Open **Actions > JDK cache > Run workflow** to select the distribution, Java ver
 
 ### Maven configuration warm path
 
-The **Maven configuration warm path** workflow compares two `actions/setup-java` refs in the action's own Maven configuration path. It checks out a configurable setup-java repository, runs baseline and candidate refs on Linux, Windows, and macOS, and covers Maven cache, Gradle cache, no-cache, single-version, multi-version, empty toolchains, and existing toolchains scenarios.
+The **Maven configuration warm path** workflow compares two refs of setup-java across 36 configurations: three operating systems, three cache profiles, single and multiple Java versions, and an empty or pre-existing `toolchains.xml`.
 
-Each matrix entry alternates three warm in-job setup runs for the baseline and candidate implementations, then reports median and p95 setup time. The workflow also records `dist/setup/index.js`, total `dist/setup` JavaScript bytes, and the JavaScript chunk files containing the XML parser.
+Unlike the other workflows it does not repeat one scenario across many runners; it runs each configuration once. A single configuration therefore yields one paired difference and cannot support an interval on its own. Each configuration is instead treated as a **block**: the arms are compared within it, on the same runner, in ABBA order after a discarded warm-up slot, and the differences are pooled across the matrix. That answers the question the workflow actually asks — whether the candidate differs from the baseline across configurations — at no extra job cost.
+
+Per-configuration numbers are still published, but as single observations with no verdict, because that is all they are. Breakdowns by operating system and by cache profile are reported with their own intervals; groups with few blocks will read `inconclusive` even where the pooled result does not, which is the intended behaviour rather than a defect.
+
+Open **Actions > Maven configuration warm path > Run workflow** to select the repository and the two refs.
 
 ## Reading results
 
