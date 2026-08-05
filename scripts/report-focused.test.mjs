@@ -114,3 +114,44 @@ test("reports an A/A comparison as inconclusive", () => {
   assert.notEqual(analysis.verdict, "improvement");
   assert.notEqual(analysis.verdict, "regression");
 });
+
+// Real data from run 30976592589, an A/A run with both refs set to `main`, so
+// the true effect is exactly zero. Seven runners agreed to within 0.12s, but two
+// had a single slot that stalled on the cache service (8.169s against a 3.286s
+// sibling, and 10.030s against 4.449s). The mean of the paired differences put
+// those stalls entirely on the candidate arm and the harness reported a 0.821s
+// regression, 95% CI [0.119, 1.672].
+test("does not report an effect when two runners had a stalled slot", () => {
+  const observed = [
+    [1, 1.544, 1.452, 1.541, 1.594],
+    [2, 3.632, 3.592, 3.513, 3.513],
+    [3, 2.796, 8.169, 3.286, 2.781],
+    [4, 3.659, 3.841, 3.708, 3.812],
+    [5, 3.665, 5.232, 5.319, 5.292],
+    [6, 3.663, 4.449, 10.03, 3.763],
+    [7, 4.089, 4.544, 5.454, 3.772],
+    [8, 1.397, 1.37, 1.384, 1.39],
+    [9, 1.452, 1.469, 1.475, 1.354],
+    [10, 1.59, 1.435, 1.412, 1.49],
+  ];
+  const csv = observed
+    .map(([sample, b1, c2, c3, b4]) =>
+      [
+        `"${sample}","baseline","1","${b1 * 1000}"`,
+        `"${sample}","candidate","2","${c2 * 1000}"`,
+        `"${sample}","candidate","3","${c3 * 1000}"`,
+        `"${sample}","baseline","4","${b4 * 1000}"`,
+      ].join("\n"),
+    )
+    .join("\n");
+  const analysis = analyze(parseSamples(csv));
+  assert.equal(analysis.verdict, "inconclusive");
+  assert.ok(analysis.interval.low < 0 && analysis.interval.high > 0);
+  // The runners with a stalled slot are identified by their own arm disagreeing
+  // with itself, which carries no information about the effect.
+  assert.deepEqual(
+    analysis.droppedRunners.map((entry) => entry.sample).sort((a, b) => a - b),
+    [3, 5, 6, 7],
+  );
+  assert.equal(analysis.control.verdict, "inconclusive");
+});

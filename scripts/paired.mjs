@@ -120,6 +120,43 @@ export function buildPairs(
   });
 }
 
+// A slot can stall on the cache service for several seconds. Such a runner is
+// not measuring the effect, and which arm the stall lands on is arbitrary, so it
+// contributes an arbitrarily large difference.
+//
+// The filter looks only at how much an arm disagrees with itself, which is a
+// pure noise quantity: it has the same distribution whether or not the arms
+// differ. Excluding runners on it therefore cannot bias the estimated effect,
+// unlike filtering on the difference between arms. The threshold is robust
+// (median plus a multiple of the median absolute deviation) so that it adapts to
+// the run rather than being a fixed number of seconds.
+export function dropStalledRunners(pairs, { tolerance = 6 } = {}) {
+  if (pairs.length < 4) return { kept: pairs, dropped: [] };
+  const spreads = pairs.map((pair) =>
+    Math.max(
+      Math.abs(pair.baselineRepeatDelta),
+      Math.abs(pair.candidateRepeatDelta),
+    ),
+  );
+  const limit =
+    median(spreads) +
+    tolerance * Math.max(medianAbsoluteDeviation(spreads), 1e-9);
+  const kept = [];
+  const dropped = [];
+  pairs.forEach((pair, index) => {
+    if (spreads[index] > limit) {
+      dropped.push({ sample: pair.sample, repeatSpread: spreads[index] });
+    } else {
+      kept.push(pair);
+    }
+  });
+  // Never discard so much that what remains cannot support a verdict.
+  if (kept.length < Math.ceil(pairs.length / 2)) {
+    return { kept: pairs, dropped: [] };
+  }
+  return { kept, dropped, thresholdSeconds: limit };
+}
+
 // The smallest effect the harness can trust, derived from how much the same
 // implementation varies between its two slots on one runner.
 export function noiseFloor(pairs) {
@@ -148,32 +185,43 @@ export function analyzePairs(
   baselineArm = "baseline",
   candidateArm = "candidate",
 ) {
-  const pairs = buildPairs(rows, baselineArm, candidateArm);
+  const allPairs = buildPairs(rows, baselineArm, candidateArm);
+  const {
+    kept: pairs,
+    dropped,
+    thresholdSeconds,
+  } = dropStalledRunners(allPairs);
   const differences = pairs.map((pair) => pair.difference);
   const baselineValues = pairs.map((pair) => pair.baseline);
   const candidateValues = pairs.map((pair) => pair.candidate);
   const floor = noiseFloor(pairs);
   const interval = pairedInterval(differences, { seed: 1 });
+  const pValue = pairedPermutationTest(differences, { seed: 3 });
   // The same estimator applied to the within-arm repeats. A trustworthy harness
   // must not resolve a difference here, because it compares an arm with itself.
   // Judged against the same noise floor as the real effect, so a healthy run
   // reports `within-noise` or `inconclusive`.
-  const controlInterval = pairedInterval(
-    pairs.map((pair) => pair.baselineRepeatDelta),
-    { seed: 2 },
-  );
+  const controlDifferences = pairs.map((pair) => pair.baselineRepeatDelta);
+  const controlInterval = pairedInterval(controlDifferences, { seed: 2 });
+  const controlPValue = pairedPermutationTest(controlDifferences, { seed: 4 });
   return {
     pairs,
     noiseFloorSeconds: floor,
     baseline: armSummary(baselineArm, baselineValues),
     candidate: armSummary(candidateArm, candidateValues),
     interval,
-    pValue: pairedPermutationTest(differences, { seed: 3 }),
+    pValue,
     shiftSeconds: hodgesLehmann(candidateValues, baselineValues),
-    verdict: classify(interval, { noiseFloor: floor }),
+    verdict: classify(interval, { noiseFloor: floor, pValue }),
+    droppedRunners: dropped,
+    stallThresholdSeconds: thresholdSeconds,
     control: {
       interval: controlInterval,
-      verdict: classify(controlInterval, { noiseFloor: floor }),
+      pValue: controlPValue,
+      verdict: classify(controlInterval, {
+        noiseFloor: floor,
+        pValue: controlPValue,
+      }),
     },
   };
 }
@@ -217,7 +265,10 @@ export function analyzeAgainstReference(rows, arms, reference) {
         : pairedPermutationTest(differences, { seed: 50 + index }),
       verdict: isReference
         ? "reference"
-        : classify(interval, { noiseFloor: floor }),
+        : classify(interval, {
+            noiseFloor: floor,
+            pValue: pairedPermutationTest(differences, { seed: 50 + index }),
+          }),
     };
   });
   // Each arm's own two slots compared with themselves. Nothing changed between
@@ -230,6 +281,10 @@ export function analyzeAgainstReference(rows, arms, reference) {
     controlDifferences.length === 0
       ? null
       : pairedInterval(controlDifferences, { seed: 99 });
+  const controlPValue =
+    controlDifferences.length === 0
+      ? null
+      : pairedPermutationTest(controlDifferences, { seed: 98 });
   return {
     runners,
     arms,
@@ -238,7 +293,11 @@ export function analyzeAgainstReference(rows, arms, reference) {
     comparisons,
     control: {
       interval: controlInterval,
-      verdict: classify(controlInterval, { noiseFloor: floor }),
+      pValue: controlPValue,
+      verdict: classify(controlInterval, {
+        noiseFloor: floor,
+        pValue: controlPValue,
+      }),
     },
   };
 }

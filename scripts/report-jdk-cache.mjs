@@ -62,6 +62,10 @@ export function markdown(metadata, analysis, caches) {
     "",
     `A/A control (\`cache-jdk: false\` against itself) reports **${control.verdict}** at ${formatInterval(control.interval)}. A healthy harness reports \`within-noise\` or \`inconclusive\` here; an \`improvement\` or \`regression\` means slot ordering is biasing results and the verdict above cannot be trusted.`,
     "",
+    analysis.droppedRunners.length === 0
+      ? "No runner was discarded for a stalled slot."
+      : `Discarded ${analysis.droppedRunners.length} runner(s) whose own arm disagreed with itself by more than ${analysis.stallThresholdSeconds.toFixed(3)}s, a threshold derived from the spread of the other runners: ${analysis.droppedRunners.map((entry) => `#${entry.sample} (${entry.repeatSpread.toFixed(3)}s)`).join(", ")}. A stalled slot lands on an arbitrary arm and would otherwise dominate the mean; the decision uses only within-arm spread, which carries no information about the effect.`,
+    "",
     "## Arms",
     "",
     "| Arm | Runners | Mean (s) | Median (s) | SD (s) | MAD (s) | p95 (s) |",

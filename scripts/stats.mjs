@@ -120,6 +120,13 @@ export function differenceInterval(
 // Bootstrap interval for the mean of within-runner paired differences. This is
 // the estimator to prefer whenever both arms were measured on the same runner,
 // because it cancels the between-runner variance that dominates hosted CI.
+// The statistic is the mean of the paired differences. It is not robust to a
+// runner whose slot stalled on the cache service, but switching to a median
+// costs almost all the power at the sample sizes these workflows run: on six
+// runners agreeing on a 12.5s effect, a sign-flip test on the median returns
+// p = 0.13. Robustness is provided instead by discarding stalled runners before
+// they reach this function, which is a decision made on within-arm spread and so
+// cannot bias the effect.
 export function pairedInterval(differences, options = {}) {
   const {
     iterations = BOOTSTRAP_ITERATIONS,
@@ -142,7 +149,9 @@ export function pairedInterval(differences, options = {}) {
 }
 
 // Two-sided permutation test on the mean of paired differences. Under the null
-// hypothesis the sign of each pair is arbitrary, so we resample signs.
+// hypothesis the sign of each pair is arbitrary, so we resample signs. It tests
+// the same statistic the interval estimates, and unlike the percentile bootstrap
+// it is exact under the null, which is why a verdict requires it to agree.
 export function pairedPermutationTest(differences, options = {}) {
   const { iterations = BOOTSTRAP_ITERATIONS, seed } = options;
   if (differences.length === 0) return null;
@@ -175,11 +184,22 @@ export function hodgesLehmann(treatment, baseline) {
 // Turn an interval into a decision. An interval that straddles zero means the
 // benchmark did not resolve the effect, and an effect smaller than the harness
 // noise floor is not trustworthy even when the interval excludes zero.
+// A verdict requires the bootstrap interval and the permutation test to agree.
+// The percentile bootstrap is approximate on ten paired observations, while the
+// sign-flip permutation test is exact under the null, so where they disagree the
+// interval is the one that is wrong. Passing no p-value keeps the interval-only
+// behaviour for callers that have no test to offer.
 export function classify(interval, options = {}) {
-  const { noiseFloor = 0, lowerIsBetter = true } = options;
+  const {
+    noiseFloor = 0,
+    lowerIsBetter = true,
+    pValue = null,
+    alpha = 0.05,
+  } = options;
   if (!interval) return "unknown";
   const { low, high, estimate } = interval;
   if (low <= 0 && high >= 0) return "inconclusive";
+  if (pValue !== null && pValue >= alpha) return "inconclusive";
   if (Math.abs(estimate) < noiseFloor) return "within-noise";
   const improved = lowerIsBetter ? estimate < 0 : estimate > 0;
   return improved ? "improvement" : "regression";
@@ -200,7 +220,7 @@ export function describeVerdict(verdict) {
     case "within-noise":
       return "No usable signal — the effect is smaller than the harness noise floor.";
     case "inconclusive":
-      return "Inconclusive — the confidence interval includes zero; collect more samples.";
+      return "Inconclusive — the interval includes zero or the permutation test does not agree; collect more samples.";
     default:
       return "Unknown.";
   }

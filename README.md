@@ -19,7 +19,9 @@ Every job also runs one unmeasured warm-up slot first. The first setup in a job 
 
 **One cache, every arm.** A cache entry's download throughput depends on where the service placed the stored blob, and that placement is fixed for the life of the entry. Seeding one entry per arm therefore confounds the arm with its blob, and because the bias is identical on every runner, pairing cannot remove it and more samples only tighten the interval around the wrong answer. A single entry is seeded and every arm restores it.
 
-**Intervals, not point estimates.** `scripts/stats.mjs` reports a bootstrap 95% confidence interval, a permutation p-value, and a Hodges-Lehmann shift, and turns them into an explicit verdict. A comparison whose interval includes zero is reported as `inconclusive` rather than as a number that looks like a result.
+**Intervals, not point estimates.** `scripts/stats.mjs` reports a bootstrap 95% confidence interval, a permutation p-value, and a Hodges-Lehmann shift, and turns them into an explicit verdict. A comparison whose interval includes zero is reported as `inconclusive` rather than as a number that looks like a result. A verdict additionally requires the permutation test to agree: the percentile bootstrap is only approximate at ten paired observations, while the sign-flip test is exact under the null, so where they disagree the interval is the one that is wrong.
+
+**Stalled runners are discarded.** A slot can stall on the cache service for several seconds. Which arm the stall lands on is arbitrary, so that runner contributes an arbitrarily large difference and, with ten runners, one such slot moves the mean by more than any effect being measured. Runners whose *own arm disagrees with itself* by more than a robust threshold are dropped. That decision is made purely on within-arm spread, which has the same distribution whether or not the arms differ, so unlike filtering on the arm difference it cannot bias the result. Every report lists what it discarded and why.
 
 Every report also publishes two guard rails:
 
