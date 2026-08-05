@@ -167,7 +167,7 @@ Each save runs in a local action at `.github/actions/cache-save-slot` rather tha
 
 ### JDK cache
 
-The **JDK cache** workflow measures the installed-JDK cache added on `actions/setup-java@main`. It compares `cache-jdk: false` against `cache-jdk: true`, defaulting to Azul Zulu 17, which is not preinstalled in the GitHub-hosted runner tool cache. Both arms use the same action ref, so the result isolates JDK caching instead of conflating it with implementation changes between commits.
+The **JDK cache** workflow measures the installed-JDK cache added on `actions/setup-java@main`. It compares `cache-jdk: false` against `cache-jdk: true`, defaulting to Azul Zulu 17, which is not preinstalled in the GitHub-hosted runner tool cache. Every public Java 17 Linux x64 distribution supported without credentials or license acceptance is available for comparison. Both arms use the same action ref, so the result isolates JDK caching instead of conflating it with implementation changes between commits.
 
 A single seed job compiles Spring PetClinic to populate one Maven cache entry and one JDK cache entry. Every measurement runner then runs both arms in one job in ABBA order under `cache-read-only: true`. Both arms restore the same Maven entry — only the JDK entry differs between them, which is the effect under test.
 

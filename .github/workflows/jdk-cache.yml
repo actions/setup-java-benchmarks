@@ -18,9 +18,21 @@ on:
         required: true
         type: choice
         options:
-          - zulu
+          - corretto
+          - dragonwell
+          - graalvm
+          - graalvm-community
+          - jetbrains
+          - kona
+          - liberica
+          - liberica-nik
           - microsoft
+          - oracle
+          - oracle-openjdk
+          - sapmachine
+          - semeru
           - temurin
+          - zulu
         default: zulu
       java-version:
         description: Java feature version
