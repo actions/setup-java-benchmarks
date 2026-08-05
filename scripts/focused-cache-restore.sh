@@ -35,22 +35,28 @@ case "$command" in
     ;;
   verify)
     arm=${2:?arm is required}
-    actual=$(wc -c < "$dependency_fixture")
-    expected=$((DEPENDENCY_FIXTURE_MIB * 1024 * 1024))
-    if [ "$actual" -ne "$expected" ]; then
-      echo "Dependency fixture for $arm is $actual bytes, expected $expected" >&2
-      exit 1
-    fi
+    check_fixture() {
+      local label=$1 path=$2 expected=$3
+      if [ ! -f "$path" ]; then
+        echo "$label fixture for $arm is missing at $path;" \
+          "the seeded cache was not restored" >&2
+        exit 1
+      fi
+      local actual
+      actual=$(wc -c < "$path")
+      if [ "$actual" -ne "$expected" ]; then
+        echo "$label fixture for $arm is $actual bytes, expected $expected" >&2
+        exit 1
+      fi
+    }
+    check_fixture Dependency "$dependency_fixture" \
+      "$((DEPENDENCY_FIXTURE_MIB * 1024 * 1024))"
     # Only the candidate arm is expected to maintain a separate wrapper cache;
     # a baseline that also produces one is fine, so this check is arm-specific
     # and non-fatal when the fixture is simply absent for the baseline.
     if [ "$arm" = "candidate" ]; then
-      actual=$(wc -c < "$wrapper_fixture")
-      expected=$((WRAPPER_FIXTURE_MIB * 1024 * 1024))
-      if [ "$actual" -ne "$expected" ]; then
-        echo "Wrapper fixture for $arm is $actual bytes, expected $expected" >&2
-        exit 1
-      fi
+      check_fixture Wrapper "$wrapper_fixture" \
+        "$((WRAPPER_FIXTURE_MIB * 1024 * 1024))"
     fi
     ;;
   *)
