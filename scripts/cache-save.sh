@@ -219,7 +219,7 @@ import { createRequire } from "node:module";
 // by package name fails outright. Resolving its manifest and requiring the file
 // its `main` points at goes around the map, and keeps working whichever version
 // a given setup-java ref happens to pin.
-function loadCacheClient(require, manifest) {
+function loadCacheClient(require, callerManifest) {
   const { readFileSync } = require("node:fs");
   const { dirname, join } = require("node:path");
   let manifestPath;
@@ -229,15 +229,15 @@ function loadCacheClient(require, manifest) {
     // Some versions do not expose "./package.json" through the map either, in
     // which case the install layout is the only thing left to go on.
     manifestPath = join(
-      dirname(manifest),
+      dirname(callerManifest),
       "node_modules",
       "@actions",
       "cache",
       "package.json",
     );
   }
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  return require(join(dirname(manifestPath), manifest.main ?? "lib/cache.js"));
+  const packageJson = JSON.parse(readFileSync(manifestPath, "utf8"));
+  return require(join(dirname(manifestPath), packageJson.main ?? "lib/cache.js"));
 }
 
 const [manifest] = process.argv.slice(2);
@@ -265,7 +265,7 @@ import { pathToFileURL } from "node:url";
 // by package name fails outright. Resolving its manifest and requiring the file
 // its `main` points at goes around the map, and keeps working whichever version
 // a given setup-java ref happens to pin.
-function loadCacheClient(require, manifest) {
+function loadCacheClient(require, callerManifest) {
   const { readFileSync } = require("node:fs");
   const { dirname, join } = require("node:path");
   let manifestPath;
@@ -275,15 +275,15 @@ function loadCacheClient(require, manifest) {
     // Some versions do not expose "./package.json" through the map either, in
     // which case the install layout is the only thing left to go on.
     manifestPath = join(
-      dirname(manifest),
+      dirname(callerManifest),
       "node_modules",
       "@actions",
       "cache",
       "package.json",
     );
   }
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  return require(join(dirname(manifestPath), manifest.main ?? "lib/cache.js"));
+  const packageJson = JSON.parse(readFileSync(manifestPath, "utf8"));
+  return require(join(dirname(manifestPath), packageJson.main ?? "lib/cache.js"));
 }
 
 const [manifest, fixtureDir, key, resultsFile, sample, arm, slot] =
