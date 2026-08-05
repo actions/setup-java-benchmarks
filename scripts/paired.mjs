@@ -334,10 +334,12 @@ export function analyzeAgainstReference(rows, arms, reference) {
 // to fail with the name of what is missing. Rendering `undefined` into a results
 // table is worse than not rendering one at all.
 export function requireEnv(env, names) {
-  const missing = names.filter((name) => !env[name]);
+  const requiredNames = Array.isArray(names) ? names : [names];
+  const missing = requiredNames.filter((name) => !env[name]);
   if (missing.length > 0) {
     throw new Error(
       `Missing required environment variables: ${missing.join(", ")}`,
     );
   }
+  return typeof names === "string" ? env[names] : undefined;
 }

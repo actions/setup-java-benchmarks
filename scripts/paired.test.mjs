@@ -11,3 +11,7 @@ test("requireEnv names every missing variable", () => {
     /Missing required environment variables: B, C/,
   );
 });
+
+test("requireEnv returns a required value by name", () => {
+  assert.equal(requireEnv({ A: "1" }, "A"), "1");
+});
