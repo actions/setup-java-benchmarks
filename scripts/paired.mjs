@@ -130,13 +130,15 @@ export function buildPairs(
 // unlike filtering on the difference between arms. The threshold is robust
 // (median plus a multiple of the median absolute deviation) so that it adapts to
 // the run rather than being a fixed number of seconds.
-export function dropStalledRunners(pairs, { tolerance = 6 } = {}) {
+export function dropStalledRunners(pairs, { tolerance = 6, spreadOf } = {}) {
   if (pairs.length < 4) return { kept: pairs, dropped: [] };
-  const spreads = pairs.map((pair) =>
-    Math.max(
-      Math.abs(pair.baselineRepeatDelta),
-      Math.abs(pair.candidateRepeatDelta),
-    ),
+  const spreads = pairs.map(
+    spreadOf ??
+      ((pair) =>
+        Math.max(
+          Math.abs(pair.baselineRepeatDelta),
+          Math.abs(pair.candidateRepeatDelta),
+        )),
   );
   const limit =
     median(spreads) +
@@ -230,7 +232,23 @@ export function analyzePairs(
 // Used where the workflow measures more than two implementations in the same
 // job, such as the version sweep.
 export function analyzeAgainstReference(rows, arms, reference) {
-  const runners = groupByRunner(rows, arms);
+  const allRunners = groupByRunner(rows, arms);
+  // Same filter as the two-arm workflows, applied across every arm: a runner
+  // whose slots for one version disagree with each other has stalled, and the
+  // arm the stall landed on is arbitrary.
+  const {
+    kept: runners,
+    dropped,
+    thresholdSeconds,
+  } = dropStalledRunners(allRunners, {
+    spreadOf: (runner) =>
+      Math.max(
+        ...arms.map((arm) => {
+          const slots = runner.slots.get(arm);
+          return Math.abs(slots[1] - slots[0]);
+        }),
+      ),
+  });
   const perArm = new Map(
     arms.map((arm) => [
       arm,
@@ -290,6 +308,8 @@ export function analyzeAgainstReference(rows, arms, reference) {
     arms,
     reference,
     noiseFloorSeconds: floor,
+    droppedRunners: dropped,
+    stallThresholdSeconds: thresholdSeconds,
     comparisons,
     control: {
       interval: controlInterval,

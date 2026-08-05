@@ -106,3 +106,29 @@ test("renders a version table, a control and per-runner medians", () => {
   assert.match(report, /not comparable \(no caching\)/);
   assert.match(report, /setup-java-Linux-x64-maven-abc/);
 });
+
+test("discards a runner whose slots for one version disagree", () => {
+  // Nine well-behaved runners and one whose v4 slots differ by seconds, which
+  // means that runner stalled rather than measured. Which version a stall lands
+  // on is arbitrary, so it must not reach the comparison.
+  const rows = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((sample) =>
+    sweep(sample, 1, flat),
+  );
+  const stalled = ORDER.map((arm, index) => {
+    const slot = index + 1;
+    const elapsed = arm === "v4" && slot === 4 ? 12000 : 3000;
+    return `"10","${arm}","${slot}","${elapsed}"`;
+  }).join("\n");
+  const analysis = analyzeAgainstReference(
+    parseSamples([...rows, stalled].join("\n")),
+    ARMS,
+    "main",
+  );
+  assert.deepEqual(
+    analysis.droppedRunners.map((entry) => entry.sample),
+    [10],
+  );
+  const v4 = analysis.comparisons.find((entry) => entry.arm === "v4");
+  assert.ok(Math.abs(v4.differenceSeconds) < 1e-9);
+  assert.equal(v4.verdict, "inconclusive");
+});

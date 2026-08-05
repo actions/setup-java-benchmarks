@@ -120,6 +120,10 @@ export function markdown(metadata, analysis, caches) {
     "",
     `A/A control (\`${REFERENCE}\` against itself) reports **${control.verdict}**${control.interval ? ` at ${formatInterval(control.interval)}` : ""}. A healthy harness reports \`within-noise\` or \`inconclusive\` here; anything else means slot ordering is biasing results and the table above cannot be trusted.`,
     "",
+    analysis.droppedRunners.length === 0
+      ? "No runner was discarded for a stalled slot."
+      : `Discarded ${analysis.droppedRunners.length} runner(s) whose slots for one version disagreed with each other by more than ${analysis.stallThresholdSeconds.toFixed(3)}s, a threshold derived from the spread of the other runners: ${analysis.droppedRunners.map((entry) => `#${entry.sample}`).join(", ")}. The version a stall lands on is arbitrary, and the decision uses only within-version spread, which carries no information about the differences between versions.`,
+    "",
     "## Per-runner medians",
     "",
     `| Runner | ${VERSIONS.map((entry) => entry.label).join(" | ")} |`,
