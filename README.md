@@ -5,7 +5,7 @@ This repository compares [`actions/setup-java@v1.4.4`](https://github.com/action
 The benchmark is designed around the two costs that matter to Actions users:
 
 - **Execution time:** setup, build, cache restore, and post-job cache save durations.
-- **Cache storage:** compressed Maven dependency and Maven Wrapper cache sizes.
+- **Cache storage:** compressed JDK, Maven dependency, and Maven Wrapper cache sizes.
 
 ## Scenarios
 
@@ -36,6 +36,14 @@ The report job writes a Markdown summary and uploads raw JSON and CSV files. Ben
 ### Focused cache restore
 
 The **Focused cache restore** workflow isolates the setup step for comparing v4 with `main`. It uses a pinned Temurin JDK from the hosted runner tool cache, seeds a synthetic 160 MiB dependency cache for both versions and a 9 MiB wrapper cache for `main`, and runs no Maven command. Warm measurement jobs therefore contain no JDK or Maven Central downloads; they measure JDK discovery and Actions cache restoration only.
+
+### JDK cache
+
+The **JDK cache** workflow measures the installed-JDK cache added on `actions/setup-java@main`. It compares a baseline arm with `cache-jdk: false` against a treatment arm with `cache-jdk: true`, defaulting to Microsoft Build of OpenJDK 17. Both arms use the same action ref so the result isolates JDK caching instead of conflating it with implementation changes between commits. Each arm first seeds its Maven dependency and wrapper caches by compiling Spring PetClinic. The treatment seed also downloads and saves the JDK. Warm matrix jobs then use `cache-read-only: true`, so they restore caches without creating entries or racing to save the same key.
+
+JDK cache keys are derived from the JDK's identity and source; unlike dependency cache keys, they cannot be namespaced per iteration. The seed/read-only design avoids cross-contamination between samples. Every seed and measurement job also removes matching JDKs from `$RUNNER_TOOL_CACHE` before setup, deliberately measuring the not-preinstalled path and preventing a hosted-runner tool-cache hit from bypassing JDK cache restore and save logic. Select Temurin to test that same forced-miss path with a distribution normally preinstalled on hosted runners.
+
+Open **Actions > JDK cache > Run workflow** to select the distribution, Java version, warm sample count, and cache cleanup behavior. The report compares warm setup, build, post-step, and job medians; records cold seed setup and JDK save time; and reports the JDK, dependency, and wrapper cache sizes.
 
 ### Maven configuration warm path
 
