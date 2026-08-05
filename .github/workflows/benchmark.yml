@@ -3,15 +3,24 @@ name: Benchmark setup-java
 on:
   workflow_dispatch:
     inputs:
-      iterations:
-        description: Independent cold/warm samples per combination
+      samples:
+        description: Runners to measure on (each contributes 2 observations per version)
         required: true
         type: choice
         options:
-          - "1"
-          - "3"
-          - "5"
-        default: "3"
+          - "2"
+          - "6"
+          - "10"
+          - "20"
+        default: "10"
+      distribution:
+        description: JDK distribution for v2 and later
+        required: true
+        type: choice
+        options:
+          - temurin
+          - microsoft
+        default: temurin
       java-version:
         description: Java feature version
         required: true
@@ -34,14 +43,20 @@ concurrency:
   group: setup-java-benchmark
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  v1-cold:
-    name: v1 / cold / zulu / ${{ matrix.iteration }}
+  # One Maven cache entry is seeded and every version that supports caching
+  # restores it. Seeding one entry per version would confound the version with
+  # its stored blob: a cache entry's download throughput depends on where the
+  # service placed it, and because that bias is identical on every runner,
+  # pairing cannot remove it and more samples only tighten the interval around
+  # the wrong answer.
+  seed:
+    name: Seed cache
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
     steps:
       - name: Check out Spring PetClinic
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -49,207 +64,79 @@ jobs:
           repository: spring-projects/spring-petclinic
           ref: ${{ env.PETCLINIC_REF }}
           persist-credentials: false
+      - name: Check out benchmark scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: .benchmark
+          persist-credentials: false
+      - name: Prepare cache identity
+        run: bash .benchmark/scripts/version-sweep.sh prepare "benchmark-${{ github.run_id }}"
+      # Each version registers a post-job save against the same local repository.
+      # The first save wins and the rest are skipped as exact key hits.
+
       - name: Setup Java v1
         uses: actions/setup-java@v1.4.4
         with:
           java-version: ${{ inputs.java-version }}
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  v2-cold:
-    name: v2 / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
       - name: Setup Java v2
         uses: actions/setup-java@v2.5.1
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  v3-cold:
-    name: v3 / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Isolate benchmark caches
-        env:
-          BENCHMARK_ID: v3-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: printf '<!-- benchmark-id=%s -->\n' "$BENCHMARK_ID" >> pom.xml
       - name: Setup Java v3
         uses: actions/setup-java@v3.14.1
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  v4-cold:
-    name: v4 / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Isolate benchmark caches
-        env:
-          BENCHMARK_ID: v4-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
       - name: Setup Java v4
         uses: actions/setup-java@v4.8.0
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
           cache-dependency-path: .benchmark-cache-key
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  v52-cold:
-    name: v5.2 / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Isolate benchmark caches
-        env:
-          BENCHMARK_ID: v52-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
       - name: Setup Java v5.2
         uses: actions/setup-java@v5.2.0
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
           cache-dependency-path: .benchmark-cache-key
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  v56-cold:
-    name: v5.6 / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Isolate benchmark caches
-        env:
-          BENCHMARK_ID: v56-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
-          printf '# benchmark-id=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
       - name: Setup Java v5.6
         uses: actions/setup-java@v5.6.0
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
           cache-dependency-path: .benchmark-cache-key
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  main-cold:
-    name: main / cold / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Isolate benchmark caches
-        env:
-          BENCHMARK_ID: main-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
-          printf '# benchmark-id=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
       - name: Setup Java main
         uses: actions/setup-java@main
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
           cache-dependency-path: .benchmark-cache-key
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
       - name: Build PetClinic
         run: ./mvnw --batch-mode --no-transfer-progress compile
 
-  v1-warm:
-    name: v1 / warm / zulu / ${{ matrix.iteration }}
-    needs: v1-cold
-    if: ${{ !cancelled() }}
+  # Every version is measured in the same job, in the order v1..main followed by
+  # main..v1. Differencing within a runner removes between-runner variance, and
+  # the mirrored order places each version's two slots symmetrically about the
+  # middle of the job so that drift across the job cancels.
+  warm:
+    name: warm / ${{ matrix.sample }}
+    needs: seed
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
+      # Every runner pulls the same seeded blob, so running the whole matrix at
+      # once measures contention on the cache service that no real workflow would
+      # see. Waves are kept small so each measurement reflects an ordinary
+      # restore.
+      max-parallel: 4
       matrix:
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
+        sample: ${{ fromJSON(inputs.samples == '20' && '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]' || inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
     steps:
       - name: Check out Spring PetClinic
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -257,213 +144,200 @@ jobs:
           repository: spring-projects/spring-petclinic
           ref: ${{ env.PETCLINIC_REF }}
           persist-credentials: false
-      - name: Setup Java v1
+      - name: Check out benchmark scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: .benchmark
+          persist-credentials: false
+
+      # cache-read-only exists only on main, so it is not used here: applying it
+      # to some arms and not others would make post-job behaviour asymmetric.
+      # Every slot restores its cache on an exact primary-key hit, and
+      # actions/cache skips saving in that case, so no measured slot creates an
+      # entry regardless of the version.
+      - name: Reset slot 1
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 1 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 1 setup (v1)
         uses: actions/setup-java@v1.4.4
         with:
           java-version: ${{ inputs.java-version }}
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  v2-warm:
-    name: v2 / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    needs: v2-cold
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Setup Java v2
+      - name: Record slot 1
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v1 1
+      - name: Reset slot 2
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 2 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 2 setup (v2)
         uses: actions/setup-java@v2.5.1
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  v3-warm:
-    name: v3 / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    needs: v3-cold
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Reuse benchmark cache identity
-        env:
-          BENCHMARK_ID: v3-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: printf '<!-- benchmark-id=%s -->\n' "$BENCHMARK_ID" >> pom.xml
-      - name: Setup Java v3
+      - name: Record slot 2
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v2 2
+      - name: Reset slot 3
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 3 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 3 setup (v3)
         uses: actions/setup-java@v3.14.1
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  v4-warm:
-    name: v4 / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    needs: v4-cold
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Reuse benchmark cache identity
-        env:
-          BENCHMARK_ID: v4-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
-      - name: Setup Java v4
+      - name: Record slot 3
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v3 3
+      - name: Reset slot 4
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 4 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 4 setup (v4)
         uses: actions/setup-java@v4.8.0
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
           cache-dependency-path: .benchmark-cache-key
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  v52-warm:
-    name: v5.2 / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    needs: v52-cold
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Reuse benchmark cache identity
-        env:
-          BENCHMARK_ID: v52-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
-      - name: Setup Java v5.2
+      - name: Record slot 4
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v4 4
+      - name: Reset slot 5
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 5 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 5 setup (v5.2)
         uses: actions/setup-java@v5.2.0
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
           cache-dependency-path: .benchmark-cache-key
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  v56-warm:
-    name: v5.6 / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    needs: v56-cold
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Reuse benchmark cache identity
-        env:
-          BENCHMARK_ID: v56-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
-          printf '# benchmark-id=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
-      - name: Setup Java v5.6
+      - name: Record slot 5
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v52 5
+      - name: Reset slot 6
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 6 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 6 setup (v5.6)
         uses: actions/setup-java@v5.6.0
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
           cache-dependency-path: .benchmark-cache-key
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  main-warm:
-    name: main / warm / ${{ matrix.distribution }} / ${{ matrix.iteration }}
-    needs: main-cold
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        distribution: [temurin, microsoft]
-        iteration: ${{ fromJSON(inputs.iterations == '5' && '[1,2,3,4,5]' || inputs.iterations == '3' && '[1,2,3]' || '[1]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Reuse benchmark cache identity
-        env:
-          BENCHMARK_ID: main-${{ matrix.distribution }}-${{ matrix.iteration }}-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .benchmark-cache-key
-          printf '# benchmark-id=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
-      - name: Setup Java main
+      - name: Record slot 6
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v56 6
+      - name: Reset slot 7
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 7 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 7 setup (main)
         uses: actions/setup-java@main
         with:
-          distribution: ${{ matrix.distribution }}
+          distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
           cache: maven
           cache-dependency-path: .benchmark-cache-key
-      - name: Record Java environment
-        run: java -XshowSettings:properties -version 2>&1 | grep -E 'java.home|java.vendor|java.version'
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
+      - name: Record slot 7
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" main 7
+      - name: Reset slot 8
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 8 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 8 setup (main)
+        uses: actions/setup-java@main
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record slot 8
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" main 8
+      - name: Reset slot 9
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 9 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 9 setup (v5.6)
+        uses: actions/setup-java@v5.6.0
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record slot 9
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v56 9
+      - name: Reset slot 10
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 10 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 10 setup (v5.2)
+        uses: actions/setup-java@v5.2.0
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record slot 10
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v52 10
+      - name: Reset slot 11
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 11 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 11 setup (v4)
+        uses: actions/setup-java@v4.8.0
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-dependency-path: .benchmark-cache-key
+      - name: Record slot 11
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v4 11
+      - name: Reset slot 12
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 12 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 12 setup (v3)
+        uses: actions/setup-java@v3.14.1
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+      - name: Record slot 12
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v3 12
+      - name: Reset slot 13
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 13 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 13 setup (v2)
+        uses: actions/setup-java@v2.5.1
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+      - name: Record slot 13
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v2 13
+      - name: Reset slot 14
+        run: bash .benchmark/scripts/version-sweep.sh reset "benchmark-${{ github.run_id }}"
+      - name: Start slot 14 timer
+        run: node .benchmark/scripts/measure.mjs start
+      - name: Slot 14 setup (v1)
+        uses: actions/setup-java@v1.4.4
+        with:
+          java-version: ${{ inputs.java-version }}
+      - name: Record slot 14
+        run: node .benchmark/scripts/measure.mjs record ".benchmark-results/version-sweep-${{ matrix.sample }}.csv" "${{ matrix.sample }}" v1 14
+
+      - name: Upload sample timings
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: version-sweep-${{ matrix.sample }}
+          path: .benchmark-results/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
 
   report:
     name: Report
-    needs: [v1-cold, v2-cold, v3-cold, v4-cold, v52-cold, v56-cold, main-cold, v1-warm, v2-warm, v3-warm, v4-warm, v52-warm, v56-warm, main-warm]
+    needs: warm
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
@@ -471,10 +345,17 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Download sample timings
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: version-sweep-*
+          merge-multiple: true
+          path: .benchmark-results
       - name: Generate benchmark report
         env:
           GH_TOKEN: ${{ github.token }}
-          ITERATIONS: ${{ inputs.iterations }}
+          SAMPLES: ${{ inputs.samples }}
+          DISTRIBUTION: ${{ inputs.distribution }}
           JAVA_VERSION: ${{ inputs.java-version }}
           CLEANUP_CACHES: ${{ inputs.cleanup-caches }}
         run: node scripts/report.mjs

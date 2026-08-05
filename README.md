@@ -7,6 +7,27 @@ The benchmark is designed around the two costs that matter to Actions users:
 - **Execution time:** setup, build, cache restore, and post-job cache save durations.
 - **Cache storage:** compressed JDK, Maven dependency, and Maven Wrapper cache sizes.
 
+## Methodology
+
+Every workflow here measures effects of a few hundred milliseconds to a few seconds on hosted runners, where the variance between runners is larger than the effect. Four properties are what make a result mean something, and all four workflows now share them.
+
+**Millisecond timing.** The Actions API reports step `started_at` and `completed_at` only to the nearest second. Setup steps take two to six seconds, so reading durations from the API quantizes every measurement to ±500 ms — the same magnitude as the effects being measured. Timing is taken inside the job with `scripts/measure.mjs`.
+
+**Same-runner pairing.** Between-runner variance cannot be averaged away by adding more independent jobs to each arm. Every arm is measured inside the *same* job, in an order mirrored about the middle of the job: ABBA for two arms, and `v1..main` followed by `main..v1` for the version sweep. Differencing within a runner removes the runner's own speed, and the mirrored order cancels drift that is linear across the job. Each measured slot deletes `~/.m2` first so every restore extracts into an empty tree.
+
+**One cache, every arm.** A cache entry's download throughput depends on where the service placed the stored blob, and that placement is fixed for the life of the entry. Seeding one entry per arm therefore confounds the arm with its blob, and because the bias is identical on every runner, pairing cannot remove it and more samples only tighten the interval around the wrong answer. A single entry is seeded and every arm restores it.
+
+**Intervals, not point estimates.** `scripts/stats.mjs` reports a bootstrap 95% confidence interval, a permutation p-value, and a Hodges-Lehmann shift, and turns them into an explicit verdict. A comparison whose interval includes zero is reported as `inconclusive` rather than as a number that looks like a result.
+
+Every report also publishes two guard rails:
+
+- A **noise floor**, the median spread between the two slots of the same arm on one runner. An effect smaller than this is reported as `within-noise` even when its interval excludes zero.
+- An **A/A control**, the same estimator applied to one arm against itself. It costs no extra jobs because every arm is already measured twice per runner. A healthy run reports `within-noise` or `inconclusive`; anything else means the harness is biasing results and the headline verdict cannot be trusted.
+
+After changing a harness, run it with both arms set to the same ref. The true effect is then exactly zero, and any other verdict is a defect rather than a finding. That check is what caught the per-arm cache confound described above: on identical code it reported a 0.859 s improvement, with the baseline blob served at ~60 MB/s and the candidate blob at ~105–130 MB/s on the same runner in the same job.
+
+`scripts/paired.mjs` implements the pairing and `scripts/stats.mjs` the statistics; every report builds on both.
+
 ## Scenarios
 
 Each action version runs with Java 17 on `ubuntu-24.04`:
@@ -18,18 +39,15 @@ Each action version runs with Java 17 on `ubuntu-24.04`:
 
 v1 predates distribution selection and integrated dependency caching. It runs only its native Zulu installer path. v2 supports the Temurin and Microsoft scenarios, but its bundled legacy cache client is rejected by the current Actions cache service. v1 and v2 therefore have no Maven cache storage, and their cold/warm labels are repeated uncached samples.
 
-Every combination gets an isolated cache key and runs twice:
+A seed job compiles Spring PetClinic once to populate a single Maven cache entry. Every measurement runner then sets up all seven versions in one job, in the order `v1..main` followed by `main..v1`, deleting `~/.m2` before each slot. The report compares every version against `main` with a paired interval per runner.
 
-1. **Cold:** no dependency or wrapper cache exists; the post action saves every cache supported by that version.
-2. **Warm:** restores the caches created by the matching cold job.
-
-v3, v4, and v5.2 cache only Maven dependencies. v5.6 and `main` also cache the Maven Wrapper distribution separately, making the storage and execution-time tradeoff visible. Because v3 predates `cache-dependency-path`, its benchmark identity is an inert XML comment appended to `pom.xml`; later versions use a dedicated marker file.
+v3, v4, and v5.2 cache only Maven dependencies. v5.6 and `main` also cache the Maven Wrapper distribution separately, making the storage and execution-time tradeoff visible. v4 and later share one cache entry through `cache-dependency-path`, so the stored blob is held constant across them. v3 predates that input and keys on `pom.xml`, so it necessarily uses its own entry; treat its difference with more caution than the rest. v1 and v2 do no caching at all and serve as the uncached reference.
 
 Spring PetClinic and third-party actions are pinned to commits. `setup-java@main` intentionally remains a moving ref so each run evaluates the current upcoming v6 code; the report records the `main` commit observed when it is generated.
 
 ## Running
 
-Open **Actions > Benchmark setup-java > Run workflow**. Choose one, three, or five independent samples. Three is the default.
+Open **Actions > Benchmark setup-java > Run workflow**. Choose how many runners to measure on; each contributes two observations per version. Ten is the default.
 
 The report job writes a Markdown summary and uploads raw JSON and CSV files. Benchmark-created caches are deleted after measurement by default, preventing repeated runs from consuming repository cache storage. Disable cleanup when you need to inspect the entries manually.
 
@@ -64,11 +82,15 @@ Two consecutive runs of that harness against an unchanged `v4.8.0` — where the
 
 ### JDK cache
 
-The **JDK cache** workflow measures the installed-JDK cache added on `actions/setup-java@main`. It compares a baseline arm with `cache-jdk: false` against a treatment arm with `cache-jdk: true`, defaulting to Microsoft Build of OpenJDK 17. Both arms use the same action ref so the result isolates JDK caching instead of conflating it with implementation changes between commits. Each arm first seeds its Maven dependency and wrapper caches by compiling Spring PetClinic. The treatment seed also downloads and saves the JDK. Warm matrix jobs then use `cache-read-only: true`, so they restore caches without creating entries or racing to save the same key.
+The **JDK cache** workflow measures the installed-JDK cache added on `actions/setup-java@main`. It compares `cache-jdk: false` against `cache-jdk: true`, defaulting to Microsoft Build of OpenJDK 17. Both arms use the same action ref, so the result isolates JDK caching instead of conflating it with implementation changes between commits.
 
-JDK cache keys are derived from the JDK's identity and source; unlike dependency cache keys, they cannot be namespaced per iteration. The seed/read-only design avoids cross-contamination between samples. Every seed and measurement job also removes matching JDKs from `$RUNNER_TOOL_CACHE` before setup, deliberately measuring the not-preinstalled path and preventing a hosted-runner tool-cache hit from bypassing JDK cache restore and save logic. Select Temurin to test that same forced-miss path with a distribution normally preinstalled on hosted runners.
+A single seed job compiles Spring PetClinic to populate one Maven cache entry and one JDK cache entry. Every measurement runner then runs both arms in one job in ABBA order under `cache-read-only: true`. Both arms restore the same Maven entry — only the JDK entry differs between them, which is the effect under test.
 
-Open **Actions > JDK cache > Run workflow** to select the distribution, Java version, warm sample count, and cache cleanup behavior. The report compares warm setup, build, post-step, and job medians; records cold seed setup and JDK save time; and reports the JDK, dependency, and wrapper cache sizes.
+Every seed and measured slot removes matching JDKs from `$RUNNER_TOOL_CACHE` first, deliberately measuring the not-preinstalled path and preventing a hosted-runner tool-cache hit from bypassing JDK cache restore logic. Select Temurin to test that same forced-miss path with a distribution normally preinstalled on hosted runners.
+
+JDK cache keys are derived from the JDK's identity and source, so unlike dependency cache keys they cannot be namespaced per run; the `prepare` job deletes existing JDK caches before seeding.
+
+Open **Actions > JDK cache > Run workflow** to select the distribution, Java version, action ref, runner count, and cache cleanup behavior.
 
 ### Maven configuration warm path
 
@@ -88,7 +110,7 @@ The summary reports medians for:
 
 Public repositories do not pay for standard GitHub-hosted runners. The estimated minutes are included to make the results applicable to private repositories; actual charges depend on the account plan and runner type.
 
-Network throughput, hosted-runner image changes, upstream artifact availability, and runner load all introduce variance. The **Benchmark setup-java** and **JDK cache** workflows still read step durations from the Actions API at one-second resolution and compare arms across independent runners, so treat their sub-second differences as indicative only and compare multiple runs before drawing conclusions. Use **Focused cache restore** when a difference needs to be established rather than illustrated; it is the only workflow here that reports a confidence interval, a noise floor, and an A/A control.
+Network throughput, hosted-runner image changes, upstream artifact availability, and runner load all introduce variance. Read the verdict rather than the point estimate: a comparison reported as `inconclusive` has not established anything, however suggestive its number looks, and one reported as `within-noise` is smaller than the harness can resolve. Check the A/A control before trusting any headline — if it resolves a difference, the run is measuring the harness rather than the code.
 
 ## Local checks
 

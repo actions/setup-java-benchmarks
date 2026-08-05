@@ -10,148 +10,25 @@ import { pathToFileURL } from "node:url";
 
 import { hashFilesSingle } from "./report.mjs";
 import {
-  classify,
-  describeVerdict,
-  formatInterval,
-  hodgesLehmann,
-  mean,
-  median,
-  medianAbsoluteDeviation,
-  pairedInterval,
-  pairedPermutationTest,
-  quantile,
-  standardDeviation,
-} from "./stats.mjs";
+  analyzePairs,
+  buildPairs,
+  noiseFloor,
+  parseSamples,
+  readSampleFiles as readPairedSampleFiles,
+} from "./paired.mjs";
+import { classify, describeVerdict, formatInterval } from "./stats.mjs";
 
-const API_VERSION = "2022-11-28";
-const RESULTS_DIR = ".benchmark-results";
+export { buildPairs, noiseFloor, parseSamples };
 
-// Every measurement job uploads its own CSV so that merging the artifacts
-// cannot overwrite another runner's samples.
-export async function readSampleFiles(directory = RESULTS_DIR) {
-  const entries = await readdir(directory);
-  const files = entries.filter(
-    (entry) => entry.startsWith("focused-timings") && entry.endsWith(".csv"),
-  );
-  if (files.length === 0) {
-    throw new Error(`No focused timing CSVs found in ${directory}`);
-  }
-  const contents = await Promise.all(
-    files.sort().map((file) => readFile(join(directory, file), "utf8")),
-  );
-  return contents.join("\n");
-}
-
-// Each runner measures four slots in ABBA order: baseline, candidate,
-// candidate, baseline. Averaging the two slots per arm cancels any linear drift
-// across the job, and differencing within a runner removes between-runner
-// variance.
-export function parseSamples(csv) {
-  return csv
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [sample, arm, slot, elapsedMs] = line
-        .split(",")
-        .map((value) => value.replace(/^"|"$/g, ""));
-      return {
-        sample: Number(sample),
-        arm,
-        slot: Number(slot),
-        seconds: Number(elapsedMs) / 1000,
-      };
-    });
-}
-
-// One paired observation per runner, plus the within-arm repeat difference that
-// serves as a null-effect (A/A) measurement requiring no extra jobs.
-export function buildPairs(rows) {
-  const bySample = new Map();
-  for (const row of rows) {
-    const entry = bySample.get(row.sample) ?? { baseline: [], candidate: [] };
-    if (!entry[row.arm]) continue;
-    entry[row.arm].push(row);
-    bySample.set(row.sample, entry);
-  }
-  const pairs = [];
-  for (const [sample, entry] of [...bySample.entries()].sort(
-    (a, b) => a[0] - b[0],
-  )) {
-    if (entry.baseline.length !== 2 || entry.candidate.length !== 2) continue;
-    const baselineSlots = entry.baseline
-      .sort((a, b) => a.slot - b.slot)
-      .map((row) => row.seconds);
-    const candidateSlots = entry.candidate
-      .sort((a, b) => a.slot - b.slot)
-      .map((row) => row.seconds);
-    pairs.push({
-      sample,
-      baselineSlots,
-      candidateSlots,
-      baseline: mean(baselineSlots),
-      candidate: mean(candidateSlots),
-      difference: mean(candidateSlots) - mean(baselineSlots),
-      baselineRepeatDelta: baselineSlots[1] - baselineSlots[0],
-      candidateRepeatDelta: candidateSlots[1] - candidateSlots[0],
-    });
-  }
-  return pairs;
-}
-
-// The smallest effect the harness can trust. Derived from how much the same
-// implementation varies between its two slots on one runner.
-export function noiseFloor(pairs) {
-  const repeats = [
-    ...pairs.map((pair) => Math.abs(pair.baselineRepeatDelta)),
-    ...pairs.map((pair) => Math.abs(pair.candidateRepeatDelta)),
-  ];
-  if (repeats.length === 0) return 0;
-  return quantile(repeats, 0.5);
-}
-
-function armSummary(name, values) {
-  return {
-    arm: name,
-    samples: values.length,
-    meanSeconds: mean(values),
-    medianSeconds: median(values),
-    standardDeviationSeconds: standardDeviation(values),
-    madSeconds: medianAbsoluteDeviation(values),
-    p95Seconds: quantile(values, 0.95),
-  };
+export function readSampleFiles(directory) {
+  return readPairedSampleFiles("focused-timings", directory);
 }
 
 export function analyze(rows) {
-  const pairs = buildPairs(rows);
-  const differences = pairs.map((pair) => pair.difference);
-  const baselineValues = pairs.map((pair) => pair.baseline);
-  const candidateValues = pairs.map((pair) => pair.candidate);
-  const floor = noiseFloor(pairs);
-  const interval = pairedInterval(differences, { seed: 1 });
-  // The same estimator applied to the within-arm repeats. A trustworthy harness
-  // must not resolve a difference here, because it compares an arm with itself.
-  // Judged against the same noise floor as the real effect, so a healthy run
-  // reports `within-noise` or `inconclusive`.
-  const controlInterval = pairedInterval(
-    pairs.map((pair) => pair.baselineRepeatDelta),
-    { seed: 2 },
-  );
-  return {
-    pairs,
-    noiseFloorSeconds: floor,
-    baseline: armSummary("baseline", baselineValues),
-    candidate: armSummary("candidate", candidateValues),
-    interval,
-    pValue: pairedPermutationTest(differences, { seed: 3 }),
-    shiftSeconds: hodgesLehmann(candidateValues, baselineValues),
-    verdict: classify(interval, { noiseFloor: floor }),
-    control: {
-      interval: controlInterval,
-      verdict: classify(controlInterval, { noiseFloor: floor }),
-    },
-  };
+  return analyzePairs(rows, "baseline", "candidate");
 }
+
+const API_VERSION = "2022-11-28";
 
 function csvValue(value) {
   return `"${String(value ?? "").replaceAll('"', '""')}"`;

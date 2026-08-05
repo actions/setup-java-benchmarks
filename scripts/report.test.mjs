@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  hashFilesSingle,
-  median,
-  parseBenchmarkJob,
-  secondsBetween,
-  sha256,
-} from "./report.mjs";
+import { analyzeAgainstReference, parseSamples } from "./paired.mjs";
+import { VERSIONS, hashFilesSingle, markdown, sha256 } from "./report.mjs";
+
+const ARMS = VERSIONS.map((entry) => entry.arm);
+const ORDER = [...ARMS, ...[...ARMS].reverse()];
+
+// One runner's worth of the mirrored sweep. `speed` scales every slot so that a
+// slow runner stays slow across all versions, which is what the pairing removes.
+function sweep(sample, speed, perVersionMs, drift = 0) {
+  return ORDER.map((arm, index) => {
+    const slot = index + 1;
+    const elapsed = perVersionMs[arm] * speed + drift * index;
+    return `"${sample}","${arm}","${slot}","${Math.round(elapsed)}"`;
+  }).join("\n");
+}
+
+const flat = Object.fromEntries(ARMS.map((arm) => [arm, 3000]));
 
 test("hashes benchmark cache markers", () => {
   assert.equal(
@@ -20,55 +30,76 @@ test("hashes benchmark cache markers", () => {
   );
 });
 
-test("calculates medians", () => {
-  assert.equal(median([3, 1, 2]), 2);
-  assert.equal(median([4, 1, 2, 3]), 2.5);
-  assert.equal(median([null]), null);
-});
-
-test("calculates step duration", () => {
-  assert.equal(
-    secondsBetween("2026-01-01T00:00:01Z", "2026-01-01T00:00:04.500Z"),
-    3.5,
+test("keeps only runners that measured every version twice", () => {
+  const csv = [
+    sweep(1, 1, flat),
+    // A runner that stopped after the first few slots must be discarded rather
+    // than contribute a difference computed from unbalanced slots.
+    '"2","v1","1","3000"',
+    '"2","v2","2","3000"',
+  ].join("\n");
+  const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
+  assert.deepEqual(
+    analysis.runners.map((runner) => runner.sample),
+    [1],
   );
 });
 
-test("parses benchmark job names", () => {
-  assert.deepEqual(parseBenchmarkJob("v1 / cold / zulu / 1"), {
-    version: "v1",
-    phase: "cold",
-    distribution: "zulu",
-    iteration: 1,
-  });
-  assert.deepEqual(parseBenchmarkJob("v2 / warm / microsoft / 3"), {
-    version: "v2",
-    phase: "warm",
-    distribution: "microsoft",
-    iteration: 3,
-  });
-  assert.deepEqual(parseBenchmarkJob("v3 / cold / temurin / 5"), {
-    version: "v3",
-    phase: "cold",
-    distribution: "temurin",
-    iteration: 5,
-  });
-  assert.deepEqual(parseBenchmarkJob("v4 / warm / microsoft / 2"), {
-    version: "v4",
-    phase: "warm",
-    distribution: "microsoft",
-    iteration: 2,
-  });
-  assert.deepEqual(parseBenchmarkJob("v5.2 / warm / microsoft / 1"), {
-    version: "v5.2",
-    phase: "warm",
-    distribution: "microsoft",
-    iteration: 1,
-  });
-  assert.deepEqual(parseBenchmarkJob("v5.6 / cold / temurin / 3"), {
-    version: "v5.6",
-    phase: "cold",
-    distribution: "temurin",
-    iteration: 3,
-  });
-  assert.equal(parseBenchmarkJob("Report"), null);
+test("removes between-runner speed differences", () => {
+  // Runners differ by up to 3x, and every version is 500ms slower than main.
+  // Pairing within a runner must recover 500ms regardless of the spread.
+  const perVersion = {
+    ...flat,
+    v1: 3500,
+    v2: 3500,
+    v3: 3500,
+    v4: 3500,
+    v52: 3500,
+    v56: 3500,
+  };
+  const csv = [1, 2, 3, 4, 5, 6]
+    .map((sample) => sweep(sample, 0.5 + sample * 0.5, perVersion))
+    .join("\n");
+  const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
+  const v4 = analysis.comparisons.find((entry) => entry.arm === "v4");
+  assert.ok(Math.abs(v4.differenceSeconds - 1.125) < 0.001);
+  assert.equal(v4.verdict, "regression");
+});
+
+test("cancels linear drift across the job", () => {
+  // Every version is identical, but the job gets steadily slower. The mirrored
+  // order must absorb that so no version is reported as different from main.
+  const csv = [1, 2, 3, 4, 5, 6]
+    .map((sample) => sweep(sample, 1, flat, 40))
+    .join("\n");
+  const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
+  for (const comparison of analysis.comparisons) {
+    assert.ok(Math.abs(comparison.differenceSeconds) < 1e-9);
+  }
+});
+
+test("reports the reference against itself without a verdict", () => {
+  const csv = [1, 2, 3, 4].map((sample) => sweep(sample, 1, flat)).join("\n");
+  const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
+  const reference = analysis.comparisons.find((entry) => entry.arm === "main");
+  assert.equal(reference.verdict, "reference");
+  assert.equal(reference.interval, null);
+});
+
+test("renders a version table, a control and per-runner medians", () => {
+  const csv = [1, 2, 3, 4]
+    .map((sample) => sweep(sample, 1 + sample * 0.1, flat))
+    .join("\n");
+  const analysis = analyzeAgainstReference(parseSamples(csv), ARMS, "main");
+  const report = markdown(
+    { runId: "1", distribution: "temurin", javaVersion: "17" },
+    analysis,
+    [{ key: "setup-java-Linux-x64-maven-abc", sizeBytes: 60 * 1024 * 1024 }],
+  );
+  assert.match(report, /# setup-java version sweep/);
+  assert.match(report, /\| v4\.8\.0 \|/);
+  assert.match(report, /A\/A control/);
+  assert.match(report, /Harness noise floor/);
+  assert.match(report, /## Per-runner medians/);
+  assert.match(report, /setup-java-Linux-x64-maven-abc/);
 });

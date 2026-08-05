@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       samples:
-        description: Warm samples per arm
+        description: Runners to measure on (each contributes 2 paired observations)
         required: true
         type: choice
         options:
@@ -26,6 +26,16 @@ on:
         required: true
         type: string
         default: "17"
+      setup-java-repository:
+        description: Repository containing the setup-java action
+        required: true
+        default: actions/setup-java
+        type: string
+      setup-java-ref:
+        description: Git ref of setup-java to measure
+        required: true
+        default: main
+        type: string
       cleanup-caches:
         description: Delete benchmark caches after measuring them
         required: true
@@ -42,6 +52,10 @@ env:
 concurrency:
   group: jdk-cache-benchmark
   cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   prepare:
@@ -66,8 +80,14 @@ jobs:
             gh cache delete "$cache_id" --repo "${{ github.repository }}"
           done <<< "$cache_ids"
 
-  baseline-seed:
-    name: baseline / seed
+  # Both arms share one Maven cache entry. A cache entry's download throughput
+  # depends on where the service placed the stored blob, so seeding one entry per
+  # arm would confound the arm with its blob. That bias is the same on every
+  # runner, which means pairing cannot remove it and more samples only tighten
+  # the interval around the wrong answer. Only the JDK cache differs between the
+  # arms, which is the effect under test.
+  seed:
+    name: Seed caches
     needs: prepare
     runs-on: ubuntu-24.04
     steps:
@@ -77,48 +97,21 @@ jobs:
           repository: spring-projects/spring-petclinic
           ref: ${{ env.PETCLINIC_REF }}
           persist-credentials: false
-      - name: Prepare baseline cache identity
-        env:
-          BENCHMARK_ID: jdk-cache-baseline-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .jdk-cache-key
-          printf '# jdk-cache-benchmark=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
-      # Deliberately benchmark the path where the requested JDK is not preinstalled.
-      - name: Purge matching runner tool cache
-        run: rm -rf "$RUNNER_TOOL_CACHE"/Java_*
-      - name: Setup Java main
-        uses: actions/setup-java@main
-        with:
-          distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
-          cache: maven
-          cache-jdk: false
-          cache-dependency-path: .jdk-cache-key
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
-
-  treatment-seed:
-    name: treatment / seed
-    needs: prepare
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Check out Spring PetClinic
+      - name: Check out setup-java
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
+          repository: ${{ inputs.setup-java-repository }}
+          path: .setup-java
           persist-credentials: false
-      - name: Prepare treatment cache identity
-        env:
-          BENCHMARK_ID: jdk-cache-treatment-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .jdk-cache-key
-          printf '# jdk-cache-benchmark=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
-      # The seed must download the JDK so setup-java registers its post-job save.
+          ref: ${{ inputs.setup-java-ref }}
+      - name: Prepare cache identity
+        run: bash scripts/jdk-cache.sh prepare "jdk-cache-${{ github.run_id }}"
+      # The seed must download the JDK from the vendor so that setup-java
+      # registers its post-job save of the JDK cache.
       - name: Purge matching runner tool cache
-        run: rm -rf "$RUNNER_TOOL_CACHE"/Java_*
-      - name: Setup Java main
-        uses: actions/setup-java@main
+        run: bash scripts/jdk-cache.sh purge-toolcache
+      - name: Setup Java
+        uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
@@ -128,12 +121,20 @@ jobs:
       - name: Build PetClinic
         run: ./mvnw --batch-mode --no-transfer-progress compile
 
-  baseline-measure:
-    name: baseline / warm / ${{ matrix.sample }}
-    needs: baseline-seed
+  # Both arms run in the same job in ABBA order, so each runner yields one paired
+  # difference with its own speed cancelled out and the mirrored order cancels
+  # drift across the four slots.
+  measure:
+    name: paired / ${{ matrix.sample }}
+    needs: seed
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
+      # Every runner pulls the same seeded blobs, so running the whole matrix at
+      # once measures contention on the cache service that no real workflow would
+      # see. Waves are kept small so each measurement reflects an ordinary
+      # restore.
+      max-parallel: 4
       matrix:
         sample: ${{ fromJSON(inputs.samples == '20' && '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]' || inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
     steps:
@@ -143,16 +144,23 @@ jobs:
           repository: spring-projects/spring-petclinic
           ref: ${{ env.PETCLINIC_REF }}
           persist-credentials: false
-      - name: Prepare baseline cache identity
-        env:
-          BENCHMARK_ID: jdk-cache-baseline-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .jdk-cache-key
-          printf '# jdk-cache-benchmark=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
-      - name: Purge matching runner tool cache
-        run: rm -rf "$RUNNER_TOOL_CACHE"/Java_*
-      - name: Setup Java main
-        uses: actions/setup-java@main
+      - name: Check out setup-java
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ inputs.setup-java-repository }}
+          path: .setup-java
+          persist-credentials: false
+          ref: ${{ inputs.setup-java-ref }}
+
+      # Each slot deletes the extracted JDK and the local repository first, so
+      # every measured setup starts from the same empty state instead of
+      # extracting over files an earlier slot left behind.
+      - name: Reset slot 1
+        run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
+      - name: Start slot 1 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 1 setup (baseline, no JDK cache)
+        uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
@@ -160,34 +168,15 @@ jobs:
           cache-jdk: false
           cache-read-only: true
           cache-dependency-path: .jdk-cache-key
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
+      - name: Record slot 1
+        run: node scripts/measure.mjs record ".benchmark-results/jdk-cache-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 1
 
-  treatment-measure:
-    name: treatment / warm / ${{ matrix.sample }}
-    needs: treatment-seed
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        sample: ${{ fromJSON(inputs.samples == '20' && '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]' || inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
-    steps:
-      - name: Check out Spring PetClinic
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: spring-projects/spring-petclinic
-          ref: ${{ env.PETCLINIC_REF }}
-          persist-credentials: false
-      - name: Prepare treatment cache identity
-        env:
-          BENCHMARK_ID: jdk-cache-treatment-${{ github.run_id }}
-        run: |
-          printf '%s\n' "$BENCHMARK_ID" > .jdk-cache-key
-          printf '# jdk-cache-benchmark=%s\n' "$BENCHMARK_ID" >> .mvn/wrapper/maven-wrapper.properties
-      - name: Purge matching runner tool cache
-        run: rm -rf "$RUNNER_TOOL_CACHE"/Java_*
-      - name: Setup Java main
-        uses: actions/setup-java@main
+      - name: Reset slot 2
+        run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
+      - name: Start slot 2 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 2 setup (candidate, JDK cache)
+        uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
@@ -195,16 +184,53 @@ jobs:
           cache-jdk: true
           cache-read-only: true
           cache-dependency-path: .jdk-cache-key
-      - name: Build PetClinic
-        run: ./mvnw --batch-mode --no-transfer-progress compile
+      - name: Record slot 2
+        run: node scripts/measure.mjs record ".benchmark-results/jdk-cache-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 2
+
+      - name: Reset slot 3
+        run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
+      - name: Start slot 3 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 3 setup (candidate, JDK cache)
+        uses: ./.setup-java
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-jdk: true
+          cache-read-only: true
+          cache-dependency-path: .jdk-cache-key
+      - name: Record slot 3
+        run: node scripts/measure.mjs record ".benchmark-results/jdk-cache-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" candidate 3
+
+      - name: Reset slot 4
+        run: bash scripts/jdk-cache.sh reset "jdk-cache-${{ github.run_id }}"
+      - name: Start slot 4 timer
+        run: node scripts/measure.mjs start
+      - name: Slot 4 setup (baseline, no JDK cache)
+        uses: ./.setup-java
+        with:
+          distribution: ${{ inputs.distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+          cache-jdk: false
+          cache-read-only: true
+          cache-dependency-path: .jdk-cache-key
+      - name: Record slot 4
+        run: node scripts/measure.mjs record ".benchmark-results/jdk-cache-timings-${{ matrix.sample }}.csv" "${{ matrix.sample }}" baseline 4
+
+      - name: Upload sample timings
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: jdk-cache-timings-${{ matrix.sample }}
+          path: .benchmark-results/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
 
   report:
     name: Report
-    needs:
-      - baseline-seed
-      - treatment-seed
-      - baseline-measure
-      - treatment-measure
+    needs: measure
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
@@ -212,12 +238,20 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Download sample timings
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: jdk-cache-timings-*
+          merge-multiple: true
+          path: .benchmark-results
       - name: Generate JDK cache report
         env:
           GH_TOKEN: ${{ github.token }}
           SAMPLES: ${{ inputs.samples }}
           DISTRIBUTION: ${{ inputs.distribution }}
           JAVA_VERSION: ${{ inputs.java-version }}
+          SETUP_JAVA_REPOSITORY: ${{ inputs.setup-java-repository }}
+          SETUP_JAVA_REF: ${{ inputs.setup-java-ref }}
           CLEANUP_CACHES: ${{ inputs.cleanup-caches }}
         run: node scripts/report-jdk-cache.mjs
       - name: Upload benchmark results
