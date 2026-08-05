@@ -20,6 +20,7 @@ on:
         options:
           - corretto
           - dragonwell
+          - graalvm
           - graalvm-community
           - jetbrains
           - kona
@@ -59,6 +60,10 @@ permissions:
   contents: read
 
 env:
+  # Oracle retired the floating GraalVM 17 URL after 17.0.12. Keep the
+  # cross-distribution input at Java 17 while resolving that vendor to its last
+  # publicly archived GraalVM 17 release.
+  BENCHMARK_JAVA_VERSION: ${{ inputs.distribution == 'graalvm' && inputs.java-version == '17' && '17.0.12' || inputs.java-version }}
   # A cache segment download that fails leaves @actions/cache holding an armed
   # timer it never clears, so the action idles for the rest of this timeout after
   # its work is done (see actions/toolkit's promiseWithTimeout: the clearTimeout
@@ -141,7 +146,7 @@ jobs:
         uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          java-version: ${{ env.BENCHMARK_JAVA_VERSION }}
           cache: maven
           cache-jdk: true
           cache-dependency-path: .jdk-cache-key
@@ -215,7 +220,7 @@ jobs:
         uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          java-version: ${{ env.BENCHMARK_JAVA_VERSION }}
           cache: maven
           cache-jdk: false
           cache-read-only: true
@@ -235,7 +240,7 @@ jobs:
         uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          java-version: ${{ env.BENCHMARK_JAVA_VERSION }}
           cache: maven
           cache-jdk: false
           cache-read-only: true
@@ -257,7 +262,7 @@ jobs:
         uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          java-version: ${{ env.BENCHMARK_JAVA_VERSION }}
           cache: maven
           cache-jdk: true
           cache-read-only: true
@@ -279,7 +284,7 @@ jobs:
         uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          java-version: ${{ env.BENCHMARK_JAVA_VERSION }}
           cache: maven
           cache-jdk: true
           cache-read-only: true
@@ -301,7 +306,7 @@ jobs:
         uses: ./.setup-java
         with:
           distribution: ${{ inputs.distribution }}
-          java-version: ${{ inputs.java-version }}
+          java-version: ${{ env.BENCHMARK_JAVA_VERSION }}
           cache: maven
           cache-jdk: false
           cache-read-only: true
@@ -339,7 +344,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SAMPLES: ${{ inputs.samples }}
           DISTRIBUTION: ${{ inputs.distribution }}
-          JAVA_VERSION: ${{ inputs.java-version }}
+          JAVA_VERSION: ${{ env.BENCHMARK_JAVA_VERSION }}
           SETUP_JAVA_REPOSITORY: ${{ inputs.setup-java-repository }}
           SETUP_JAVA_REF: ${{ inputs.setup-java-ref }}
           CLEANUP_CACHES: ${{ inputs.cleanup-caches }}
