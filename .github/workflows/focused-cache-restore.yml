@@ -113,6 +113,13 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
+      # Every runner pulls the same seeded blob, so running the whole matrix at
+      # once puts all of them on the cache service simultaneously and measures
+      # contention that no real workflow would see. At 20 concurrent runners the
+      # mean restore rose from about 3s to about 8s and the noise floor from
+      # 0.34s to 1.89s, which is enough to hide the effect under test. Waves are
+      # kept small so each measurement reflects an ordinary restore.
+      max-parallel: 4
       matrix:
         sample: ${{ fromJSON(inputs.samples == '20' && '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]' || inputs.samples == '10' && '[1,2,3,4,5,6,7,8,9,10]' || inputs.samples == '6' && '[1,2,3,4,5,6]' || '[1,2]') }}
     steps:
