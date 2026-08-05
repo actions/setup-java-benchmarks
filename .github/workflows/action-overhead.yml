@@ -11,15 +11,14 @@ on:
       baseline-ref:
         description: Git ref for the baseline arm
         required: true
-        # Restore-based comparisons require both refs to compute the same cache
-        # key for the same tree, otherwise the candidate is measured on a miss
-        # while the baseline restores the seeded entry. v4.9.1 does not share a
-        # key with main for this fixture, so it is intentionally not offered
-        # here; see actions/setup-java-benchmarks#25.
+        # v4.9.1 does not share a cache key with main, so its matrix omits the
+        # warm-hit profile and compares only the directly comparable no-cache
+        # and cache-miss paths.
         type: choice
         options:
           - v5.6.0
           - v5.2.0
+          - v4.9.1
         default: v5.6.0
       candidate-ref:
         description: Git ref containing the candidate implementation
@@ -139,7 +138,7 @@ jobs:
       max-parallel: 6
       matrix:
         os: [ubuntu-latest, windows-latest, macos-15-intel]
-        cache: [none, maven-miss, maven-hit, gradle-miss]
+        cache: ${{ fromJSON(inputs.baseline-ref == 'v4.9.1' && '["none","maven-miss","gradle-miss"]' || '["none","maven-miss","maven-hit","gradle-miss"]') }}
         # Two ends of the range rather than the full cross of versions and
         # toolchains. The cross doubled the job count to separate two effects
         # that were each smaller than the run-to-run spread.
