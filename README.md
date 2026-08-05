@@ -58,11 +58,11 @@ The pairwise workflows default to the newest release, but not every scenario can
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `v5.6.0` | The newest release. `main` against this is the change set that has not shipped yet, and it is the only comparison where a difference points at a specific pull request.                  |
 | `v5.2.0` | Before the v5 cache work settled. Widens the window to the whole of v5 without leaving the versions that share a cache key scheme.                                                       |
-| `v4.9.1` | The last v4. Meaningful for **Cache save** and the version sweep, but not for restore-overlap comparisons because it computes a different Maven cache key from `main` for the same tree. |
+| `v4.9.1` | The last v4. Meaningful for **Cache save**, the version sweep, and the no-cache/miss profiles in **Action overhead**. Its warm restore cannot be compared directly because it computes a different Maven cache key from `main` for the same tree. |
 
 Nothing older is offered. v3 and earlier predate `cache-dependency-path` and so restore an entry of their own, and a stored blob's throughput is fixed for the life of that entry — the version difference is then confounded with blob placement, which pairing cannot remove. v1's bundled cache client is rejected by the current cache service outright. v4.9.1 is tracked in [#25](https://github.com/actions/setup-java-benchmarks/issues/25) for the same shared-key limitation. Those versions are still measured by the version sweep, which reports them without ranking them, and that is the right place for them.
 
-Run **Action overhead** and **Transfer overlap** once for `v5.6.0` and once for `v5.2.0`. Run **Cache save** for all three baselines, including `v4.9.1`.
+Run **Action overhead** once for each baseline; the v4 matrix automatically omits the confounded warm-hit profile. Run **Transfer overlap** once for `v5.6.0` and once for `v5.2.0`. Run **Cache save** for all three baselines, including `v4.9.1`.
 
 The sizes in the third column are the design, not an accident. setup-java does not move the bytes itself — it hands the transfer to `@actions/cache` — so a benchmark with a large fixture measures the network and a benchmark with a small one measures the action. **Action overhead** and **Transfer overlap** are deliberately the same measurement at two fixture sizes for exactly that reason, and together they decompose a restore into the part setup-java controls and the part it does not.
 
