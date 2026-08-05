@@ -169,6 +169,8 @@ Each save runs in a local action at `.github/actions/cache-save-slot` rather tha
 
 The **JDK cache** workflow measures the installed-JDK cache added on `actions/setup-java@main`. It compares `cache-jdk: false` against `cache-jdk: true`, defaulting to Azul Zulu 17, which is not preinstalled in the GitHub-hosted runner tool cache. Every public Java 17 Linux x64 distribution supported without credentials or license acceptance is available for comparison. Both arms use the same action ref, so the result isolates JDK caching instead of conflating it with implementation changes between commits.
 
+Oracle retired GraalVM's floating Java 17 download after the licensing transition that followed 17.0.12. When the workflow receives its default `java-version: 17` with `distribution: graalvm`, it therefore pins the benchmark to the still-public `17.0.12` archive; every other distribution continues to resolve the Java 17 range normally.
+
 A single seed job compiles Spring PetClinic to populate one Maven cache entry and one JDK cache entry. Every measurement runner then runs both arms in one job in ABBA order under `cache-read-only: true`. Both arms restore the same Maven entry — only the JDK entry differs between them, which is the effect under test.
 
 Every seed and measured slot removes matching JDKs from `$RUNNER_TOOL_CACHE` first, deliberately measuring the not-preinstalled path and preventing a hosted-runner tool-cache hit from bypassing JDK cache restore logic. Select Temurin to test that same forced-miss path with a distribution normally preinstalled on hosted runners.
