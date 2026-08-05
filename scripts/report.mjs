@@ -50,7 +50,7 @@ export const VERSIONS = [
   },
   {
     arm: "v4",
-    label: "v4.8.0",
+    label: "v4.9.1",
     caching: "cache-dependency-path",
     comparable: true,
   },

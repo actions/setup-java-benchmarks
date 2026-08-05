@@ -1,6 +1,6 @@
 # setup-java benchmarks
 
-This repository compares [`actions/setup-java@v1.4.4`](https://github.com/actions/setup-java/releases/tag/v1.4.4), [`actions/setup-java@v2.5.1`](https://github.com/actions/setup-java/releases/tag/v2.5.1), [`actions/setup-java@v3.14.1`](https://github.com/actions/setup-java/releases/tag/v3.14.1), [`actions/setup-java@v4.8.0`](https://github.com/actions/setup-java/releases/tag/v4.8.0), [`actions/setup-java@v5.2.0`](https://github.com/actions/setup-java/releases/tag/v5.2.0), [`actions/setup-java@v5.6.0`](https://github.com/actions/setup-java/releases/tag/v5.6.0), and the unreleased [`actions/setup-java@main`](https://github.com/actions/setup-java/tree/main) using [Spring PetClinic](https://github.com/spring-projects/spring-petclinic).
+This repository compares [`actions/setup-java@v1.4.4`](https://github.com/actions/setup-java/releases/tag/v1.4.4), [`actions/setup-java@v2.5.1`](https://github.com/actions/setup-java/releases/tag/v2.5.1), [`actions/setup-java@v3.14.1`](https://github.com/actions/setup-java/releases/tag/v3.14.1), [`actions/setup-java@v4.9.1`](https://github.com/actions/setup-java/releases/tag/v4.9.1), [`actions/setup-java@v5.2.0`](https://github.com/actions/setup-java/releases/tag/v5.2.0), [`actions/setup-java@v5.6.0`](https://github.com/actions/setup-java/releases/tag/v5.6.0), and the unreleased [`actions/setup-java@main`](https://github.com/actions/setup-java/tree/main) using [Spring PetClinic](https://github.com/spring-projects/spring-petclinic).
 
 The benchmark is designed around the two costs that matter to Actions users:
 
@@ -49,6 +49,20 @@ Caching is a chain, and a benchmark is only useful if it says which link it is m
 | **Cache save**                | What does the first run pay?               | Post-run save of a Maven-shaped tree                | Seconds                |
 | **JDK cache**                 | Is caching the JDK worth it?               | `cache-jdk` off against on, same ref                | Seconds                |
 | **Benchmark** (version sweep) | How does `main` compare with each release? | All versions on one runner, mirrored order          | Hundreds of ms         |
+
+### Which release to compare against
+
+The pairwise workflows — **Action overhead**, **Transfer overlap** and **Cache save** — take `baseline-ref` as a choice of three releases, defaulting to the newest:
+
+| Baseline | Why it is on the list                                                                                                                                                   |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `v5.6.0` | The newest release. `main` against this is the change set that has not shipped yet, and it is the only comparison where a difference points at a specific pull request. |
+| `v5.2.0` | Before the v5 cache work settled. Widens the window to the whole of v5 without leaving the versions that share a cache key scheme.                                      |
+| `v4.9.1` | The last v4. The oldest release that still takes `cache-dependency-path`, so it can restore the _same_ cache entry as `main` rather than one of its own.                |
+
+Nothing older is offered. v3 and earlier predate `cache-dependency-path` and so restore an entry of their own, and a stored blob's throughput is fixed for the life of that entry — the version difference is then confounded with blob placement, which pairing cannot remove. v1's bundled cache client is rejected by the current cache service outright. Those versions are still measured by the version sweep, which reports them without ranking them, and that is the right place for them.
+
+Run a workflow once per baseline to get all three comparisons; each run is self-contained, so they can be dispatched together.
 
 The sizes in the third column are the design, not an accident. setup-java does not move the bytes itself — it hands the transfer to `@actions/cache` — so a benchmark with a large fixture measures the network and a benchmark with a small one measures the action. **Action overhead** and **Transfer overlap** are deliberately the same measurement at two fixture sizes for exactly that reason, and together they decompose a restore into the part setup-java controls and the part it does not.
 
@@ -130,7 +144,7 @@ The workflow this grew out of was called a warm path and was not one. It had no 
 
 ### Transfer overlap
 
-The **Transfer overlap** workflow isolates the setup step to compare two refs (by default `v4.8.0` against `main`) with a synthetic 160 MiB dependency cache seeded for both arms and a 9 MiB wrapper cache, and runs no Maven command. Measurement jobs contain no JDK or Maven Central downloads.
+The **Transfer overlap** workflow isolates the setup step to compare two refs (by default `v5.6.0` against `main`) with a synthetic 160 MiB dependency cache seeded for both arms and a 9 MiB wrapper cache, and runs no Maven command. Measurement jobs contain no JDK or Maven Central downloads.
 
 When a build configures more than one cache, setup-java restores both, and whether it does so in sequence or at the same time is its own choice — unlike the throughput of either transfer. That makes overlap one of the few properties of caching a change to this action can actually move, and [actions/setup-java#1174](https://github.com/actions/setup-java/pull/1174) moved it by awaiting the two restores together. An effect that exists only while a transfer is in flight is proportional to how long the transfer takes, which is why the fixtures here are large and why the same effect is invisible in **Action overhead**.
 

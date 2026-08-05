@@ -100,7 +100,7 @@ jobs:
           java-version: ${{ inputs.java-version }}
           cache: maven
       - name: Setup Java v4
-        uses: actions/setup-java@v4.8.0
+        uses: actions/setup-java@v4.9.1
         with:
           distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
@@ -260,7 +260,7 @@ jobs:
         # discards along with the other incomplete ones, instead of letting the
         # job sit until its own timeout.
         timeout-minutes: 3
-        uses: actions/setup-java@v4.8.0
+        uses: actions/setup-java@v4.9.1
         with:
           distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
@@ -393,7 +393,7 @@ jobs:
         # discards along with the other incomplete ones, instead of letting the
         # job sit until its own timeout.
         timeout-minutes: 3
-        uses: actions/setup-java@v4.8.0
+        uses: actions/setup-java@v4.9.1
         with:
           distribution: ${{ inputs.distribution }}
           java-version: ${{ inputs.java-version }}
