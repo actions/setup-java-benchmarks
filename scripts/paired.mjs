@@ -27,6 +27,7 @@ import {
   pairedInterval,
   pairedPermutationTest,
   quantile,
+  significanceReachable,
   standardDeviation,
 } from "./stats.mjs";
 
@@ -214,7 +215,12 @@ export function analyzePairs(
     interval,
     pValue,
     shiftSeconds: hodgesLehmann(candidateValues, baselineValues),
-    verdict: classify(interval, { noiseFloor: floor, pValue }),
+    verdict: classify(interval, {
+      noiseFloor: floor,
+      pValue,
+      pairCount: pairs.length,
+    }),
+    significanceReachable: significanceReachable(pairs.length),
     droppedRunners: dropped,
     stallThresholdSeconds: thresholdSeconds,
     control: {
@@ -292,6 +298,7 @@ export function analyzeAgainstReference(rows, arms, reference) {
       verdict: isReference
         ? "reference"
         : classify(interval, {
+            pairCount: runners.length,
             noiseFloor: floor,
             pValue: pairedPermutationTest(differences, { seed: 50 + index }),
           }),

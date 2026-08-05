@@ -25,6 +25,8 @@ Every job also runs one unmeasured warm-up slot first. The first setup in a job 
 
 **Stalled runners are discarded.** A slot can stall on the cache service for several seconds. Which arm the stall lands on is arbitrary, so that runner contributes an arbitrarily large difference and, with ten runners, one such slot moves the mean by more than any effect being measured. Runners whose _own arm disagrees with itself_ by more than a robust threshold are dropped. That decision is made purely on within-arm spread, which has the same distribution whether or not the arms differ, so unlike filtering on the arm difference it cannot bias the result. Every report lists what it discarded and why.
 
+**A design that cannot reach significance says so.** The sign-flip test has only 2^n distinct assignments for n paired runners, so its smallest attainable p-value is 2^-n however large the effect is. At four usable runners that floor is 0.0625, above the 0.05 a verdict requires — the run cannot report a finding even for an effect it measured perfectly. Those runs are reported as `underpowered` rather than `inconclusive`, because the two call for opposite readings: `inconclusive` means the data did not show an effect, `underpowered` means the design could not have shown one. The first live run of **Cache value** measured caching as 4.5x faster, 22.4 s, and reported `inconclusive` on four surviving runners; that is what this exists to stop.
+
 Every report also publishes two guard rails:
 
 - A **noise floor**, the median spread between the two slots of the same arm on one runner. An effect smaller than this is reported as `within-noise` even when its interval excludes zero.

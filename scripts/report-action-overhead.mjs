@@ -282,7 +282,7 @@ export function markdown(
 
   if (overall) {
     lines.push(
-      `Pooled across ${overall.pairs.length} configurations: ${seconds(overall.interval.estimate)} ${formatInterval(overall.interval)}, permutation p = ${overall.pValue.toFixed(3)}, noise floor ${seconds(overall.noiseFloorSeconds)}.`,
+      `Pooled across ${overall.pairs.length} configurations: ${formatInterval(overall.interval)}, permutation p = ${overall.pValue.toFixed(3)}, noise floor ${seconds(overall.noiseFloorSeconds)}.`,
       "",
       `The A/A control — the two baseline slots against each other, which differ by nothing — reads ${overall.control.verdict}. Anything other than \`within-noise\` or \`inconclusive\` there means the harness is measuring something it should not, and the comparison above cannot be trusted.`,
       "",

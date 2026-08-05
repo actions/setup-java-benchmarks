@@ -5,6 +5,7 @@ import {
   bootstrapInterval,
   classify,
   createRandom,
+  describeVerdict,
   differenceInterval,
   formatInterval,
   holmAdjust,
@@ -14,7 +15,9 @@ import {
   medianAbsoluteDeviation,
   pairedInterval,
   pairedPermutationTest,
+  pairsNeededForSignificance,
   quantile,
+  significanceReachable,
   standardDeviation,
 } from "./stats.mjs";
 
@@ -148,11 +151,36 @@ test("formatInterval labels the interval's own confidence level", () => {
   // Intervals built before `confidence` was carried still read as 95%.
   assert.equal(
     formatInterval({ estimate: 0, low: -1, high: 1 }),
-    "0.0s (95% CI -1.0 to 1.0)",
+    "0.000s (95% CI -1.000 to 1.000)",
   );
 });
 
 test("Holm adjustment controls a family of p-values", () => {
   assert.deepEqual(holmAdjust([0.01, 0.04, 0.2]), [0.03, 0.08, 0.2]);
   assert.deepEqual(holmAdjust([null, 0.01, 0.2]), [null, 0.02, 0.2]);
+});
+
+// A four-runner design cannot clear 0.05 no matter how large the effect is,
+// because the sign-flip test only has sixteen assignments to draw on. Reporting
+// that as "inconclusive" invites someone to read the number anyway.
+test("calls a design underpowered when significance is unreachable", () => {
+  assert.equal(significanceReachable(4), false);
+  assert.equal(significanceReachable(5), true);
+  assert.equal(pairsNeededForSignificance(), 5);
+
+  const decisive = { estimate: -22, low: -28, high: -18 };
+  assert.equal(
+    classify(decisive, { pValue: 0.061, pairCount: 4 }),
+    "underpowered",
+  );
+  assert.equal(
+    classify(decisive, { pValue: 0.01, pairCount: 10 }),
+    "improvement",
+  );
+});
+
+test("explains what an underpowered run can and cannot show", () => {
+  const described = describeVerdict("underpowered");
+  assert.match(described, /at least 5/);
+  assert.match(described, /may be real/);
 });
