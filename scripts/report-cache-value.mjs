@@ -133,11 +133,18 @@ export function markdown(metadata, analysis, caches) {
 }
 
 export async function main(env = process.env) {
-  const token = requireEnv(env, "GH_TOKEN");
-  const runId = requireEnv(env, "GITHUB_RUN_ID");
-  const setupJavaRepository = requireEnv(env, "SETUP_JAVA_REPOSITORY");
-  const setupJavaRef = requireEnv(env, "SETUP_JAVA_REF");
-  const [owner, repo] = requireEnv(env, "GITHUB_REPOSITORY").split("/");
+  requireEnv(env, [
+    "GH_TOKEN",
+    "GITHUB_RUN_ID",
+    "SETUP_JAVA_REPOSITORY",
+    "SETUP_JAVA_REF",
+    "GITHUB_REPOSITORY",
+  ]);
+  const token = env.GH_TOKEN;
+  const runId = env.GITHUB_RUN_ID;
+  const setupJavaRepository = env.SETUP_JAVA_REPOSITORY;
+  const setupJavaRef = env.SETUP_JAVA_REF;
+  const [owner, repo] = env.GITHUB_REPOSITORY.split("/");
   if (!owner || !repo) {
     throw new Error(
       `GITHUB_REPOSITORY must be owner/repo, got "${env.GITHUB_REPOSITORY}"`,
