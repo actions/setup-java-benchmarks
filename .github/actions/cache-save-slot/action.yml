@@ -1,0 +1,43 @@
+name: Cache save slot
+description: >-
+  Time one `@actions/cache.saveCache` call, resolved from a checked-out
+  setup-java ref, and append the duration to a results CSV.
+
+# This has to be an action rather than a `run:` step. The runner injects the
+# cache service URL and runtime token into the environment of action steps only.
+# A `run:` step driving the same client gets `reserveCache failed: Cache Service
+# Url not found`, stores nothing, and — because `saveCache` swallows that and
+# returns -1 — still produces a plausible-looking duration. The first live run of
+# this scenario reported 10.278s +/- 0.008s across ten runners on exactly that
+# path: a retry backoff, not an upload.
+
+inputs:
+  arm-directory:
+    description: Directory holding the checked-out setup-java ref to load the cache client from.
+    required: true
+  fixture-directory:
+    description: Directory to save.
+    required: true
+  key:
+    description: Cache key to save under. Must be unique; saving over an existing key is a no-op.
+    required: true
+  results-file:
+    description: CSV to append the timing to. Leave empty for a discarded warm-up.
+    required: false
+    default: ""
+  sample:
+    description: Runner index, recorded as the pairing sample id.
+    required: false
+    default: ""
+  arm:
+    description: Arm label, `baseline` or `candidate`.
+    required: false
+    default: ""
+  slot:
+    description: Slot index within the job.
+    required: false
+    default: ""
+
+runs:
+  using: node24
+  main: index.js

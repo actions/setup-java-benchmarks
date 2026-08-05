@@ -13,6 +13,11 @@ case "$command" in
   prepare-fixture)
     fixture_mib=${2:?fixture size in MiB is required}
     rm -rf "$fixture_dir"
+    # The saves themselves run in a local action, which cannot see this script's
+    # variables, so the path has to cross into the job environment.
+    if [ -n "${GITHUB_ENV:-}" ]; then
+      echo "FIXTURE_DIR=$fixture_dir" >>"$GITHUB_ENV"
+    fi
     node --input-type=module - "$fixture_dir" "$fixture_mib" <<'NODE'
 import { mkdir, open, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -243,79 +248,6 @@ function loadCacheClient(require, callerManifest) {
 const [manifest] = process.argv.slice(2);
 const require = createRequire(manifest);
 loadCacheClient(require, manifest);
-NODE
-    ;;
-  save)
-    arm_dir=${2:?setup-java checkout directory is required}
-    key=${3:?cache key is required}
-    results_file=${4:-}
-    sample=${5:-}
-    arm=${6:-}
-    slot=${7:-}
-    if [ ! -d "$fixture_dir" ]; then
-      echo "Cache-save fixture is missing at $fixture_dir" >&2
-      exit 1
-    fi
-    node --input-type=module - "$PWD/$arm_dir/package.json" "$fixture_dir" "$key" \
-      "$results_file" "$sample" "$arm" "$slot" <<'NODE'
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
-
-// `@actions/cache` publishes an `exports` map with no "." entry, so requiring it
-// by package name fails outright. Resolving its manifest and requiring the file
-// its `main` points at goes around the map, and keeps working whichever version
-// a given setup-java ref happens to pin.
-function loadCacheClient(require, callerManifest) {
-  const { readFileSync } = require("node:fs");
-  const { dirname, join } = require("node:path");
-  let manifestPath;
-  try {
-    manifestPath = require.resolve("@actions/cache/package.json");
-  } catch {
-    // Some versions do not expose "./package.json" through the map either, in
-    // which case the install layout is the only thing left to go on.
-    manifestPath = join(
-      dirname(callerManifest),
-      "node_modules",
-      "@actions",
-      "cache",
-      "package.json",
-    );
-  }
-  const packageJson = JSON.parse(readFileSync(manifestPath, "utf8"));
-  return require(join(dirname(manifestPath), packageJson.main ?? "lib/cache.js"));
-}
-
-const [manifest, fixtureDir, key, resultsFile, sample, arm, slot] =
-  process.argv.slice(2);
-const require = createRequire(manifest);
-const cache = loadCacheClient(require, manifest);
-
-const started = Date.now();
-const cacheId = await cache.saveCache([fixtureDir], key);
-const elapsedMs = Date.now() - started;
-
-// `saveCache` swallows a failed reservation, logs a warning and returns -1, so
-// a slot that uploaded nothing at all still produces a plausible-looking
-// duration. The first live run measured 10.278 s +/- 0.008 s across ten
-// runners, which is a retry backoff rather than a transfer — the cache service
-// URL is injected into action steps only, never into `run:` steps, so every
-// reservation failed with "Cache Service Url not found". A benchmark that
-// reports a number for work it did not do is worse than one that fails.
-if (!Number.isFinite(cacheId) || cacheId <= 0) {
-  throw new Error(
-    `saveCache did not store ${key} (returned ${cacheId}). ` +
-      "The cache service is not reachable from this step, so the measurement " +
-      "would be a retry backoff rather than an upload.",
-  );
-}
-console.log(`Saved ${key} as cache ${cacheId} in ${elapsedMs} ms`);
-if (resultsFile) {
-  const { record } = await import(
-    pathToFileURL(`${process.cwd()}/scripts/measure.mjs`).href
-  );
-  await record(resultsFile, [sample, arm, slot], elapsedMs);
-}
 NODE
     ;;
   *)
