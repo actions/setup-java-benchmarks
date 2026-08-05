@@ -55,7 +55,7 @@ export function standardDeviation(values) {
 export function medianAbsoluteDeviation(values) {
   if (values.length === 0) return null;
   const center = median(values);
-  return 1.4826 * median(values.map(value => Math.abs(value - center)));
+  return 1.4826 * median(values.map((value) => Math.abs(value - center)));
 }
 
 function resample(values, random) {
@@ -71,7 +71,7 @@ export function bootstrapInterval(values, statistic = median, options = {}) {
   const {
     iterations = BOOTSTRAP_ITERATIONS,
     confidence = DEFAULT_CONFIDENCE,
-    seed
+    seed,
   } = options;
   if (values.length === 0) return null;
   const random = createRandom(seed);
@@ -84,7 +84,7 @@ export function bootstrapInterval(values, statistic = median, options = {}) {
     estimate: statistic(values),
     low: quantile(estimates, alpha),
     high: quantile(estimates, 1 - alpha),
-    confidence
+    confidence,
   };
 }
 
@@ -93,12 +93,12 @@ export function differenceInterval(
   treatment,
   baseline,
   statistic = median,
-  options = {}
+  options = {},
 ) {
   const {
     iterations = BOOTSTRAP_ITERATIONS,
     confidence = DEFAULT_CONFIDENCE,
-    seed
+    seed,
   } = options;
   if (treatment.length === 0 || baseline.length === 0) return null;
   const random = createRandom(seed);
@@ -113,7 +113,7 @@ export function differenceInterval(
     estimate: statistic(treatment) - statistic(baseline),
     low: quantile(estimates, alpha),
     high: quantile(estimates, 1 - alpha),
-    confidence
+    confidence,
   };
 }
 
@@ -124,7 +124,7 @@ export function pairedInterval(differences, options = {}) {
   const {
     iterations = BOOTSTRAP_ITERATIONS,
     confidence = DEFAULT_CONFIDENCE,
-    seed
+    seed,
   } = options;
   if (differences.length === 0) return null;
   const random = createRandom(seed);
@@ -137,20 +137,22 @@ export function pairedInterval(differences, options = {}) {
     estimate: mean(differences),
     low: quantile(estimates, alpha),
     high: quantile(estimates, 1 - alpha),
-    confidence
+    confidence,
   };
 }
 
 // Two-sided permutation test on the mean of paired differences. Under the null
 // hypothesis the sign of each pair is arbitrary, so we resample signs.
 export function pairedPermutationTest(differences, options = {}) {
-  const {iterations = BOOTSTRAP_ITERATIONS, seed} = options;
+  const { iterations = BOOTSTRAP_ITERATIONS, seed } = options;
   if (differences.length === 0) return null;
   const random = createRandom(seed);
   const observed = Math.abs(mean(differences));
   let atLeastAsExtreme = 0;
   for (let index = 0; index < iterations; index += 1) {
-    const flipped = differences.map(value => (random() < 0.5 ? -value : value));
+    const flipped = differences.map((value) =>
+      random() < 0.5 ? -value : value,
+    );
     if (Math.abs(mean(flipped)) >= observed) atLeastAsExtreme += 1;
   }
   // Add-one correction keeps the p-value strictly positive.
@@ -174,32 +176,32 @@ export function hodgesLehmann(treatment, baseline) {
 // benchmark did not resolve the effect, and an effect smaller than the harness
 // noise floor is not trustworthy even when the interval excludes zero.
 export function classify(interval, options = {}) {
-  const {noiseFloor = 0, lowerIsBetter = true} = options;
-  if (!interval) return 'unknown';
-  const {low, high, estimate} = interval;
-  if (low <= 0 && high >= 0) return 'inconclusive';
-  if (Math.abs(estimate) < noiseFloor) return 'within-noise';
+  const { noiseFloor = 0, lowerIsBetter = true } = options;
+  if (!interval) return "unknown";
+  const { low, high, estimate } = interval;
+  if (low <= 0 && high >= 0) return "inconclusive";
+  if (Math.abs(estimate) < noiseFloor) return "within-noise";
   const improved = lowerIsBetter ? estimate < 0 : estimate > 0;
-  return improved ? 'improvement' : 'regression';
+  return improved ? "improvement" : "regression";
 }
 
-export function formatInterval(interval, {digits = 1, unit = 's'} = {}) {
-  if (!interval) return 'n/a';
-  const {estimate, low, high} = interval;
+export function formatInterval(interval, { digits = 1, unit = "s" } = {}) {
+  if (!interval) return "n/a";
+  const { estimate, low, high } = interval;
   return `${estimate.toFixed(digits)}${unit} (95% CI ${low.toFixed(digits)} to ${high.toFixed(digits)})`;
 }
 
 export function describeVerdict(verdict) {
   switch (verdict) {
-    case 'improvement':
-      return 'Faster — the interval excludes zero and clears the noise floor.';
-    case 'regression':
-      return 'Slower — the interval excludes zero and clears the noise floor.';
-    case 'within-noise':
-      return 'No usable signal — the effect is smaller than the harness noise floor.';
-    case 'inconclusive':
-      return 'Inconclusive — the confidence interval includes zero; collect more samples.';
+    case "improvement":
+      return "Faster — the interval excludes zero and clears the noise floor.";
+    case "regression":
+      return "Slower — the interval excludes zero and clears the noise floor.";
+    case "within-noise":
+      return "No usable signal — the effect is smaller than the harness noise floor.";
+    case "inconclusive":
+      return "Inconclusive — the confidence interval includes zero; collect more samples.";
     default:
-      return 'Unknown.';
+      return "Unknown.";
   }
 }

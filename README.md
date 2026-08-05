@@ -43,12 +43,16 @@ This workflow is the reference for how a comparison should be measured here. Thr
 
 **Same-runner pairing.** Between-runner variance on hosted runners is larger than the effects under test, and it cannot be averaged away by adding more independent jobs to each arm. Both arms run in the *same* job in ABBA order — baseline, candidate, candidate, baseline — so each runner yields one paired difference with the runner's own speed cancelled out. The mirrored order also cancels drift across the four slots. Each measured slot deletes `~/.m2` first so every restore extracts into an empty tree.
 
+**One cache, both arms.** A cache entry's download throughput depends on where the service placed the stored blob, and that placement is fixed for the life of the entry. Giving each arm its own seeded cache therefore confounds the arm with its blob, and because the bias is identical on every runner, pairing cannot remove it and more samples only tighten the interval around the wrong answer. A single entry is seeded and both arms restore it.
+
 **Intervals, not point estimates.** `scripts/stats.mjs` reports a bootstrap 95% confidence interval, a permutation p-value, and a Hodges-Lehmann shift for every comparison, and turns them into an explicit verdict. A comparison whose interval includes zero is reported as `inconclusive` rather than as a number that looks like a result.
 
 The report also publishes two guard rails:
 
 - A **noise floor**, the median spread between the two slots of the same arm on one runner. An effect smaller than this is reported as `within-noise` even when its interval excludes zero.
 - An **A/A control**, the same estimator applied to the baseline against itself. It costs no extra jobs because each arm is already measured twice per runner. A healthy run reports `within-noise` or `inconclusive`; anything else means slot ordering is biasing the results and the headline verdict cannot be trusted.
+
+Run the workflow with `baseline-ref` and `candidate-ref` set to the same value after changing it. The true effect is then exactly zero, and any verdict other than `inconclusive` or `within-noise` is a defect in the harness rather than a finding. That check is what surfaced the per-arm cache confound described above: on identical code it reported a 0.859 s improvement, with the baseline blob served at ~60 MB/s and the candidate blob at ~105–130 MB/s on the same runner in the same job.
 
 Point `baseline-ref` and `candidate-ref` at any two refs — including a PR branch — to check whether a change delivers a real improvement.
 

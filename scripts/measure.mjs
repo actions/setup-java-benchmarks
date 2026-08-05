@@ -6,18 +6,18 @@
 // the same magnitude as the effects these benchmarks try to detect. Timing the
 // step from inside the job instead keeps millisecond precision.
 
-import {appendFile, mkdir, readFile, writeFile} from 'node:fs/promises';
-import {dirname} from 'node:path';
-import {pathToFileURL} from 'node:url';
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { pathToFileURL } from "node:url";
 
-const CLOCK_FILE = '.benchmark-clock';
+const CLOCK_FILE = ".benchmark-clock";
 
 export async function start(clockFile = CLOCK_FILE) {
   await writeFile(clockFile, String(Date.now()));
 }
 
 export async function stop(clockFile = CLOCK_FILE) {
-  const started = Number(await readFile(clockFile, 'utf8'));
+  const started = Number(await readFile(clockFile, "utf8"));
   if (!Number.isFinite(started)) {
     throw new Error(`No valid start timestamp in ${clockFile}`);
   }
@@ -25,28 +25,28 @@ export async function stop(clockFile = CLOCK_FILE) {
 }
 
 function csvValue(value) {
-  return `"${String(value ?? '').replaceAll('"', '""')}"`;
+  return `"${String(value ?? "").replaceAll('"', '""')}"`;
 }
 
 export async function record(resultsFile, fields, elapsedMs) {
-  await mkdir(dirname(resultsFile), {recursive: true});
-  const line = [...fields, elapsedMs].map(csvValue).join(',');
+  await mkdir(dirname(resultsFile), { recursive: true });
+  const line = [...fields, elapsedMs].map(csvValue).join(",");
   await appendFile(resultsFile, `${line}\n`);
 }
 
 export async function main(argv) {
   const [command, ...rest] = argv;
   switch (command) {
-    case 'start': {
+    case "start": {
       await start(rest[0] ?? CLOCK_FILE);
       return;
     }
-    case 'record': {
+    case "record": {
       const [resultsFile, ...fields] = rest;
-      if (!resultsFile) throw new Error('record requires a results file');
+      if (!resultsFile) throw new Error("record requires a results file");
       const elapsedMs = await stop(CLOCK_FILE);
       await record(resultsFile, fields, elapsedMs);
-      console.log(`${fields.join('/')}: ${elapsedMs} ms`);
+      console.log(`${fields.join("/")}: ${elapsedMs} ms`);
       return;
     }
     default:
@@ -54,6 +54,9 @@ export async function main(argv) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   await main(process.argv.slice(2));
 }

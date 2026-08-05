@@ -52,8 +52,16 @@ defaults:
     shell: bash
 
 jobs:
-  baseline-seed:
-    name: Seed baseline cache
+  # A single cache entry is seeded and both arms restore it. Giving each arm its
+  # own entry confounds the arm with the stored blob: a cache entry's download
+  # throughput depends on where the service placed it, and that bias is the same
+  # on every runner, so pairing cannot remove it and more samples only tighten
+  # the interval around the wrong answer. An A/A run of this workflow with one
+  # entry per arm reported a 0.859s improvement on identical code, with the
+  # baseline blob served at ~60 MB/s and the candidate blob at ~105-130 MB/s on
+  # the same runner.
+  seed:
+    name: Seed cache
     runs-on: ubuntu-24.04
     steps:
       - name: Check out benchmark repository
@@ -81,41 +89,10 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.candidate-ref }}
       - name: Prepare cache identity
-        run: bash scripts/focused-cache-restore.sh prepare "focused-baseline-${{ github.run_id }}"
-      - name: Setup Java baseline
-        uses: ./baseline
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: maven
-          cache-dependency-path: .focused-cache-key
-      - name: Create synthetic cache fixtures
-        run: bash scripts/focused-cache-restore.sh seed-fixtures
-
-  candidate-seed:
-    name: Seed candidate caches
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Check out benchmark repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-      - name: Check out baseline setup-java
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: ${{ inputs.setup-java-repository }}
-          path: baseline
-          persist-credentials: false
-          ref: ${{ inputs.baseline-ref }}
-      - name: Check out candidate setup-java
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: ${{ inputs.setup-java-repository }}
-          path: candidate
-          persist-credentials: false
-          ref: ${{ inputs.candidate-ref }}
-      - name: Prepare cache identity
-        run: bash scripts/focused-cache-restore.sh prepare "focused-candidate-${{ github.run_id }}"
+        run: bash scripts/focused-cache-restore.sh prepare "focused-${{ github.run_id }}"
+      # Seeded with the candidate so that the wrapper cache, which only newer
+      # revisions maintain, is populated too. The baseline simply does not
+      # restore it.
       - name: Setup Java candidate
         uses: ./candidate
         with:
@@ -132,7 +109,7 @@ jobs:
   # twice per runner also yields a free A/A noise-floor estimate.
   measure:
     name: paired / ${{ matrix.sample }}
-    needs: [baseline-seed, candidate-seed]
+    needs: seed
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -159,7 +136,7 @@ jobs:
           ref: ${{ inputs.candidate-ref }}
 
       - name: Reset slot 1
-        run: bash scripts/focused-cache-restore.sh reset "focused-baseline-${{ github.run_id }}"
+        run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
       - name: Start slot 1 timer
         run: node scripts/measure.mjs start
       - name: Slot 1 setup (baseline)
@@ -175,7 +152,7 @@ jobs:
         run: bash scripts/focused-cache-restore.sh verify baseline
 
       - name: Reset slot 2
-        run: bash scripts/focused-cache-restore.sh reset "focused-candidate-${{ github.run_id }}"
+        run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
       - name: Start slot 2 timer
         run: node scripts/measure.mjs start
       - name: Slot 2 setup (candidate)
@@ -191,7 +168,7 @@ jobs:
         run: bash scripts/focused-cache-restore.sh verify candidate
 
       - name: Reset slot 3
-        run: bash scripts/focused-cache-restore.sh reset "focused-candidate-${{ github.run_id }}"
+        run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
       - name: Start slot 3 timer
         run: node scripts/measure.mjs start
       - name: Slot 3 setup (candidate)
@@ -207,7 +184,7 @@ jobs:
         run: bash scripts/focused-cache-restore.sh verify candidate
 
       - name: Reset slot 4
-        run: bash scripts/focused-cache-restore.sh reset "focused-baseline-${{ github.run_id }}"
+        run: bash scripts/focused-cache-restore.sh reset "focused-${{ github.run_id }}"
       - name: Start slot 4 timer
         run: node scripts/measure.mjs start
       - name: Slot 4 setup (baseline)
