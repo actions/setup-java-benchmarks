@@ -218,11 +218,11 @@ export function markdown(metadata, result) {
 }
 
 export async function main(env = process.env) {
-  const runId = requireEnv(env, "GITHUB_RUN_ID");
+  requireEnv(env, ["GITHUB_RUN_ID", "SETUP_JAVA_REPOSITORY", "SETUP_JAVA_REF"]);
   const metadata = {
-    runId,
-    setupJavaRepository: requireEnv(env, "SETUP_JAVA_REPOSITORY"),
-    setupJavaRef: requireEnv(env, "SETUP_JAVA_REF"),
+    runId: env.GITHUB_RUN_ID,
+    setupJavaRepository: env.SETUP_JAVA_REPOSITORY,
+    setupJavaRef: env.SETUP_JAVA_REF,
     generatedAt: new Date().toISOString(),
   };
   const rows = parseKeys(await readKeyFiles());

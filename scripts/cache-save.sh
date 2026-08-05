@@ -215,9 +215,34 @@ NODE
     node --input-type=module - "$PWD/$arm_dir/package.json" <<'NODE'
 import { createRequire } from "node:module";
 
+// `@actions/cache` publishes an `exports` map with no "." entry, so requiring it
+// by package name fails outright. Resolving its manifest and requiring the file
+// its `main` points at goes around the map, and keeps working whichever version
+// a given setup-java ref happens to pin.
+function loadCacheClient(require, manifest) {
+  const { readFileSync } = require("node:fs");
+  const { dirname, join } = require("node:path");
+  let manifestPath;
+  try {
+    manifestPath = require.resolve("@actions/cache/package.json");
+  } catch {
+    // Some versions do not expose "./package.json" through the map either, in
+    // which case the install layout is the only thing left to go on.
+    manifestPath = join(
+      dirname(manifest),
+      "node_modules",
+      "@actions",
+      "cache",
+      "package.json",
+    );
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  return require(join(dirname(manifestPath), manifest.main ?? "lib/cache.js"));
+}
+
 const [manifest] = process.argv.slice(2);
 const require = createRequire(manifest);
-require.resolve("@actions/cache");
+loadCacheClient(require, manifest);
 NODE
     ;;
   save)
@@ -236,10 +261,35 @@ NODE
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
+// `@actions/cache` publishes an `exports` map with no "." entry, so requiring it
+// by package name fails outright. Resolving its manifest and requiring the file
+// its `main` points at goes around the map, and keeps working whichever version
+// a given setup-java ref happens to pin.
+function loadCacheClient(require, manifest) {
+  const { readFileSync } = require("node:fs");
+  const { dirname, join } = require("node:path");
+  let manifestPath;
+  try {
+    manifestPath = require.resolve("@actions/cache/package.json");
+  } catch {
+    // Some versions do not expose "./package.json" through the map either, in
+    // which case the install layout is the only thing left to go on.
+    manifestPath = join(
+      dirname(manifest),
+      "node_modules",
+      "@actions",
+      "cache",
+      "package.json",
+    );
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  return require(join(dirname(manifestPath), manifest.main ?? "lib/cache.js"));
+}
+
 const [manifest, fixtureDir, key, resultsFile, sample, arm, slot] =
   process.argv.slice(2);
 const require = createRequire(manifest);
-const cache = require("@actions/cache");
+const cache = loadCacheClient(require, manifest);
 
 const started = Date.now();
 const cacheId = await cache.saveCache([fixtureDir], key);
