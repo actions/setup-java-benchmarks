@@ -101,5 +101,8 @@ test("renders a version table, a control and per-runner medians", () => {
   assert.match(report, /A\/A control/);
   assert.match(report, /Harness noise floor/);
   assert.match(report, /## Per-runner medians/);
+  // v1 and v2 skip the dependency restore entirely, so ranking them against
+  // main would compare different amounts of work.
+  assert.match(report, /not comparable \(no caching\)/);
   assert.match(report, /setup-java-Linux-x64-maven-abc/);
 });

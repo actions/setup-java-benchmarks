@@ -101,8 +101,17 @@ export function markdown(metadata, analysis, caches) {
       ? `${comparison.interval.low.toFixed(3)} to ${comparison.interval.high.toFixed(3)}`
       : "n/a";
     const p = comparison.pValue === null ? "n/a" : comparison.pValue.toFixed(3);
+    // v1 and v2 do no caching, so they never restore the Maven repository the
+    // other versions spend most of their time on. Their difference is real but
+    // it is a difference in work done, not in how well the same work is done,
+    // and calling it an improvement or a regression would invite the wrong
+    // conclusion.
+    const verdict =
+      entry.caching === "none"
+        ? "not comparable (no caching)"
+        : comparison.verdict;
     lines.push(
-      `| ${LABELS.get(comparison.arm)} | ${entry.caching} | ${summary.medianSeconds.toFixed(3)} | ${summary.meanSeconds.toFixed(3)} | ${summary.madSeconds.toFixed(3)} | ${diff} | ${ci} | ${p} | ${comparison.verdict} |`,
+      `| ${LABELS.get(comparison.arm)} | ${entry.caching} | ${summary.medianSeconds.toFixed(3)} | ${summary.meanSeconds.toFixed(3)} | ${summary.madSeconds.toFixed(3)} | ${diff} | ${ci} | ${p} | ${verdict} |`,
     );
   }
   lines.push(
@@ -129,6 +138,8 @@ export function markdown(metadata, analysis, caches) {
     "## Caches",
     "",
     "Every caching version restores the same Maven entry, so the stored blob cannot bias the comparison. v3 predates `cache-dependency-path` and keys on `pom.xml`, so it necessarily uses its own entry; treat its difference with more caution than the rest.",
+    "",
+    "v1 and v2 have no caching at all, so they skip the dependency restore entirely and their durations are not comparable with the rest. They are measured to show what the caching versions are spending their time on, not to be ranked against them.",
     "",
     "| Cache | Size (MiB) |",
     "| --- | ---: |",
