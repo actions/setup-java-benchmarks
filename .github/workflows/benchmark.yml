@@ -132,6 +132,12 @@ jobs:
     name: warm / ${{ matrix.sample }}
     needs: seed
     runs-on: ubuntu-24.04
+    # A measurement job is a couple of minutes of work. Anything far beyond that
+    # is a stalled cache download or JDK fetch rather than a slow measurement,
+    # and the run should not wait six hours for the default timeout to notice.
+    # The runner drops out of the report, which discards runners that did not
+    # complete every slot, and the remaining runners still produce a verdict.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       # Every runner pulls the same seeded blob, so running the whole matrix at
